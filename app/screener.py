@@ -29,6 +29,22 @@ from .data.universe import load_universe, Universe
 DIRECTION_ZH = {"bullish": "看涨", "bearish": "看跌", "neutral": "中性"}
 
 
+def _ytd_change(bars: List[Candle]) -> float:
+    """年内涨幅：今年首个交易日至最新收盘的累计涨幅(%)。"""
+    if not bars:
+        return 0.0
+    latest = bars[-1]
+    year = latest.dt[:4]
+    first = None
+    for b in bars:
+        if b.dt.startswith(year):
+            first = b
+            break
+    if first is None or first.close == 0:
+        return 0.0
+    return (latest.close - first.close) / first.close * 100
+
+
 class ScanCancelled(Exception):
     """扫描被用户主动取消。"""
 
@@ -113,6 +129,7 @@ class Screener:
 
         # 1.1b 近一年涨停次数预筛（基于日线推导，可与其他条件自由组合）
         limit_1y_map: Dict[str, int] = {}
+        ytd_map: Dict[str, float] = {}      # 年内涨幅缓存（命中股票才拉日线计算）
         if limit_up_count_min is not None:
             kept = []
             total = len(codes)
@@ -221,15 +238,23 @@ class Screener:
             matched_tfs = [tf for tf in timeframes if per_code_matches.get(code, {}).get(tf)]
             if not matched_tfs:
                 continue
-            # 近一年涨停次数（本地日线推导，供展示与排序）—— 仅命中股票才拉日线
+            # 近一年涨停次数 + 年内涨幅（本地日线推导）—— 仅命中股票才拉日线
             limit_1y = limit_1y_map.get(code)
-            if limit_1y is None:
+            ytd = ytd_map.get(code)
+            if limit_1y is None or ytd is None:
                 try:
                     daily_bars = self._get_bars(code, "daily")
-                    limit_1y = count_limit_up(daily_bars, code, name, days=245) if daily_bars else 0
+                    if limit_1y is None:
+                        limit_1y = count_limit_up(daily_bars, code, name, days=245) if daily_bars else 0
+                    if ytd is None:
+                        ytd = _ytd_change(daily_bars) if daily_bars else 0.0
                 except Exception:
-                    limit_1y = 0
+                    if limit_1y is None:
+                        limit_1y = 0
+                    if ytd is None:
+                        ytd = 0.0
                 limit_1y_map[code] = limit_1y
+                ytd_map[code] = ytd
             for tf in matched_tfs:
                 matches = per_code_matches[code][tf]
                 # 直接复用第 2 阶段已读取的 bars，避免重复读缓存/触发过期重拉（性能关键）
@@ -237,7 +262,7 @@ class Screener:
                 if not bars:
                     continue
                 for m in matches:
-                    row = self._build_row(code, name, tf, m, bars, close, params, limit_1y)
+                    row = self._build_row(code, name, tf, m, bars, close, params, limit_1y, ytd)
                     if row is not None:
                         results.append(row)
 
@@ -291,7 +316,7 @@ class Screener:
         return bars
 
     def _build_row(self, code, name, tf, m: PatternMatch, bars: List[Candle],
-                   close: float, params: dict, limit_1y: int = 0) -> Optional[ScanResult]:
+                   close: float, params: dict, limit_1y: int = 0, ytd: float = 0.0) -> Optional[ScanResult]:
         """套用附加过滤条件，通过则返回 ScanResult。"""
         i = m.index
         k = bars[i]
@@ -353,6 +378,7 @@ class Screener:
             resonance_levels=[],
             candle_indexes=m.candle_indexes,
             limit_1y=limit_1y,
+            ytd_change=ytd,
         )
 
     def _apply_resonance(self, results: List[ScanResult]):

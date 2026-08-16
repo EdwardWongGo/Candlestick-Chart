@@ -119,6 +119,7 @@ class ScanResult:
     resonance_levels: list = field(default_factory=list)  # 共振涉及的时间级别列表
     candle_indexes: list = field(default_factory=list)    # 图上高亮用的 K 线下标
     limit_1y: int = 0        # 近一年涨停次数（本地日线推导）
+    ytd_change: float = 0.0  # 年内涨幅%（今年首个交易日至最新收盘的累计涨幅）
 
     def to_dict(self) -> dict:
         return {
@@ -142,5 +143,6 @@ class ScanResult:
             "resonance": self.resonance,
             "resonance_levels": self.resonance_levels,
             "limit_1y": self.limit_1y,
+            "ytd_change": round(self.ytd_change, 2),
             "candle_indexes": self.candle_indexes,
         }

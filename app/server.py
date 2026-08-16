@@ -321,11 +321,13 @@ def kline(code):
     if not bars:
         return jsonify({"error": f"{code} 无 K 线数据"}), 404
 
-    # 均线
+    # 均线：5 / 10 / 15 / 20 / 120 / 250 日
     ma5 = compute_ma(bars, 5)
     ma10 = compute_ma(bars, 10)
+    ma15 = compute_ma(bars, 15)
     ma20 = compute_ma(bars, 20)
-    ma60 = compute_ma(bars, 60)
+    ma120 = compute_ma(bars, 120)
+    ma250 = compute_ma(bars, 250)
 
     candles = []
     for i, c in enumerate(bars):
@@ -333,7 +335,8 @@ def kline(code):
             "dt": c.dt, "open": c.open, "high": c.high,
             "low": c.low, "close": c.close, "volume": c.volume,
             "ma5": _round(ma5[i]), "ma10": _round(ma10[i]),
-            "ma20": _round(ma20[i]), "ma60": _round(ma60[i]),
+            "ma15": _round(ma15[i]), "ma20": _round(ma20[i]),
+            "ma120": _round(ma120[i]), "ma250": _round(ma250[i]),
         })
 
     matches = detect_patterns(bars)

@@ -226,6 +226,7 @@ body {
 /* ===== 形态列表 ===== */
 .pattern-list { max-height: 260px; overflow-y: auto; }
 .pattern-group { margin-bottom: 8px; }
+.pattern-group.disabled { opacity: .4; pointer-events: none; }
 .pattern-group-title {
   display: flex; align-items: center; justify-content: space-between;
   font-size: 11px; color: var(--text-faint); margin: 6px 0 4px; padding: 0 2px;

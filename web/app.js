@@ -196,7 +196,6 @@ function renderPatterns() {
         <label class="pat-main">
           <input type="checkbox" data-key="${p.key}" checked>
           <span class="pname">${p.name_zh} <span class="pdir" style="color:${C_DIM}">${p.name_en}</span></span>
-          <span class="pdir dir-${p.direction}">${dirZh(p.direction)}</span>
         </label>
         <label class="pat-verify" title="勾选后追加 1 天验证日，仅保留通过验证的形态">
           <input type="checkbox" class="verify-on" data-key="${p.key}"> 验证
@@ -209,12 +208,46 @@ function renderPatterns() {
   box.querySelectorAll('.group-toggle').forEach((t) => {
     t.addEventListener('click', () => toggleGroup(t.dataset.group));
   });
+  // 看涨/看跌形态互斥
+  setupDirectionExclusion();
 }
 
 function dirZh(d) { return d === 'bullish' ? '看涨' : (d === 'bearish' ? '看跌' : '中性'); }
 
+// 看涨/看跌形态互斥：勾选一方任一选项，另一方整体置灰禁用
+let _updateDirectionExclusion = null;
+function setupDirectionExclusion() {
+  const bullCbs = [...document.querySelectorAll('.pattern-group[data-dir="bullish"] .pat-main input')];
+  const bearCbs = [...document.querySelectorAll('.pattern-group[data-dir="bearish"] .pat-main input')];
+  const bullGroup = document.querySelector('.pattern-group[data-dir="bullish"]');
+  const bearGroup = document.querySelector('.pattern-group[data-dir="bearish"]');
+  if (!bullCbs.length || !bearCbs.length) return;
+
+  const update = () => {
+    const bullOn = bullCbs.some((cb) => cb.checked);
+    const bearOn = bearCbs.some((cb) => cb.checked);
+    // 看涨有勾选 → 看跌整组禁用并清空；否则（无看跌勾选时）恢复看跌可交互
+    if (bullOn) {
+      bearCbs.forEach((cb) => { cb.checked = false; cb.disabled = true; });
+    } else if (!bearOn) {
+      bearCbs.forEach((cb) => { cb.disabled = false; });
+    }
+    // 看跌有勾选 → 看涨整组禁用并清空；否则（无看涨勾选时）恢复看涨可交互
+    if (bearOn) {
+      bullCbs.forEach((cb) => { cb.checked = false; cb.disabled = true; });
+    } else if (!bullOn) {
+      bullCbs.forEach((cb) => { cb.disabled = false; });
+    }
+    bearGroup && bearGroup.classList.toggle('disabled', bullOn);
+    bullGroup && bullGroup.classList.toggle('disabled', bearOn);
+  };
+  _updateDirectionExclusion = update;
+  [...bullCbs, ...bearCbs].forEach((cb) => cb.addEventListener('change', update));
+}
+
 function setAllPatterns(checked) {
   document.querySelectorAll('#patternList .pat-main input[type=checkbox]').forEach((cb) => { cb.checked = checked; });
+  if (_updateDirectionExclusion) _updateDirectionExclusion();
 }
 
 function toggleGroup(direction) {
@@ -224,6 +257,7 @@ function toggleGroup(direction) {
   if (!cbs.length) return;
   const allChecked = cbs.every((cb) => cb.checked);
   cbs.forEach((cb) => { cb.checked = !allChecked; });   // 全选→清空，否则→全选
+  if (_updateDirectionExclusion) _updateDirectionExclusion();
 }
 
 // ===================== 文件导入 =====================
@@ -647,6 +681,8 @@ function applyLockedParams(params, source) {
       cb.disabled = false;
     }
   });
+  // 应用看涨/看跌互斥（历史已锁定看涨则看跌禁用，反之亦然）
+  if (_updateDirectionExclusion) _updateDirectionExclusion();
 
   // 附加条件（单值）：历史有值则回填并锁定，无值则留空可追加
   const lockNum = (id, v) => {
@@ -684,6 +720,8 @@ function unlockParams() {
     const el = document.getElementById(id);
     if (el) el.disabled = false;
   });
+  // 重新应用看涨/看跌互斥
+  if (_updateDirectionExclusion) _updateDirectionExclusion();
   hideLockBar();
 }
 
@@ -717,12 +755,11 @@ function renderResults() {
     market: (r) => r.market_zh || '',
     timeframe: (r) => r.timeframe,
     pattern: (r) => r.pattern_zh,
-    direction: (r) => r.direction,
-    date: (r) => r.date,
     strength: (r) => r.strength,
     volume_ratio: (r) => r.volume_ratio,
     close: (r) => r.close,
     change_pct: (r) => r.change_pct,
+    ytd_change: (r) => r.ytd_change || 0,
     limit_1y: (r) => r.limit_1y || 0,
     resonance: (r) => (r.resonance ? 1 : 0),
   };
@@ -772,8 +809,9 @@ function renderResults() {
   table.classList.remove('hidden');
 
   tbody.innerHTML = pageList.map((r) => {
-    const dirCls = r.direction === 'bullish' ? 'tag-up' : (r.direction === 'bearish' ? 'tag-down' : 'tag-tf');
     const chgCls = r.change_pct >= 0 ? 'num-up' : 'num-down';
+    const ytdCls = (r.ytd_change || 0) >= 0 ? 'num-up' : 'num-down';
+    const ytd = r.ytd_change != null ? `${r.ytd_change >= 0 ? '+' : ''}${r.ytd_change}%` : '—';
     const resonanceTag = r.resonance
       ? `<span class="tag tag-resonance">共振·${r.resonance_levels.map(lvTf).join('/')}</span>`
       : '<span style="color:var(--text-faint)">—</span>';
@@ -783,12 +821,11 @@ function renderResults() {
       <td><span class="tag tag-tf">${r.market_zh || '—'}</span></td>
       <td><span class="tag tag-tf">${r.timeframe_zh}</span></td>
       <td>${r.pattern_zh}</td>
-      <td><span class="tag ${dirCls}">${r.direction_zh}</span></td>
-      <td>${r.date}</td>
       <td class="strength-cell">${r.strength}</td>
       <td>${r.volume_ratio}×</td>
       <td>${r.close.toFixed(2)}</td>
       <td class="${chgCls}">${r.change_pct >= 0 ? '+' : ''}${r.change_pct}%</td>
+      <td class="${ytdCls}">${ytd}</td>
       <td>${r.limit_1y || 0}</td>
       <td>${resonanceTag}</td>
     </tr>`;
@@ -1270,7 +1307,7 @@ function renderKline(data) {
       textStyle: { color: C_TEXT },
     },
     legend: {
-      data: ['K线', 'MA5', 'MA10', 'MA20', 'MA60'],
+      data: ['K线', 'MA5', 'MA10', 'MA15', 'MA20', 'MA120', 'MA250'],
       textStyle: { color: C_DIM },
       top: 4,
     },
@@ -1298,8 +1335,10 @@ function renderKline(data) {
       },
       { name: 'MA5', type: 'line', data: ma('ma5'), smooth: true, showSymbol: false, lineStyle: { width: 1, color: '#f5a623' } },
       { name: 'MA10', type: 'line', data: ma('ma10'), smooth: true, showSymbol: false, lineStyle: { width: 1, color: '#4c8dff' } },
+      { name: 'MA15', type: 'line', data: ma('ma15'), smooth: true, showSymbol: false, lineStyle: { width: 1, color: '#ff7b4c' } },
       { name: 'MA20', type: 'line', data: ma('ma20'), smooth: true, showSymbol: false, lineStyle: { width: 1, color: '#b06ce0' } },
-      { name: 'MA60', type: 'line', data: ma('ma60'), smooth: true, showSymbol: false, lineStyle: { width: 1, color: '#26a69a' } },
+      { name: 'MA120', type: 'line', data: ma('ma120'), smooth: true, showSymbol: false, lineStyle: { width: 1, color: '#26a69a' } },
+      { name: 'MA250', type: 'line', data: ma('ma250'), smooth: true, showSymbol: false, lineStyle: { width: 1.5, color: '#f23645' } },
       { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: vols },
     ],
   };
