@@ -74,7 +74,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 function bindEvents() {
-  document.getElementById('scanBtn').addEventListener('click', startScan);
+  document.getElementById('scanBtn').addEventListener('click', () => startScan());
   document.getElementById('stopBtn').addEventListener('click', stopScan);
   document.getElementById('reloadBtn').addEventListener('click', reloadScan);
   document.getElementById('exportBtn').addEventListener('click', exportCSV);
@@ -293,7 +293,9 @@ function formatDuration(sec) {
 }
 
 async function startScan(params) {
-  const p = params || collectParams();
+  // 仅当传入的是带 timeframes 数组的有效参数对象时复用，否则从界面重新收集
+  // （防御：点击事件监听若误传 Event 对象，也会回退到 collectParams）
+  const p = (params && Array.isArray(params.timeframes)) ? params : collectParams();
   if (!p.timeframes || !p.timeframes.length) { alert('请至少选择一个时间级别'); return; }
   if (state.scanning) return;   // 防止重复提交
 
