@@ -1,0 +1,24 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# ---- 运行时生成数据（缓存/日志/历史/导出，均不入库） ----
+output/
+
+# ---- 工作区数据（个人记忆，不入库） ----
+.workbuddy/
+
+# ---- 虚拟环境 / 依赖 ----
+.venv/
+venv/
+env/
+
+# ---- 系统文件 ----
+.DS_Store
+Thumbs.db
+desktop.ini

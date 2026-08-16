@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<!-- Author: HZQ -->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>A股蜡烛图形态筛选工具</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🕯</span>
+      <div>
+        <h1>A股量化分析工具</h1>
+        <p class="sub">蜡烛图形态筛选 · 涨停/跌停 · 烂板 · 连板天梯 · 龙虎榜</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span class="badge" id="dataSourceBadge">数据源：通达信 · 东财 · 同花顺</span>
+    </div>
+  </header>
+
+  <!-- ===================== 顶层功能切换 ===================== -->
+  <nav class="tabs" id="mainTabs">
+    <div class="tab active" data-tab="screener">📊 形态筛选</div>
+    <div class="tab" data-tab="zt">📈 涨停板</div>
+    <div class="tab" data-tab="dt">📉 跌停板</div>
+    <div class="tab" data-tab="ladder">🪜 连板天梯</div>
+    <div class="tab" data-tab="lhb">🐉 龙虎榜</div>
+    <div class="tab" data-tab="hotspot">🔥 题材热点</div>
+    <div class="tab" data-tab="news">📰 周末热点</div>
+  </nav>
+
+  <!-- ===================== 形态筛选（默认页） ===================== -->
+  <div class="tab-panel active" id="panel-screener">
+  <div class="layout">
+    <!-- ===================== 左侧筛选面板 ===================== -->
+    <aside class="sidebar">
+      <section class="panel">
+        <h3>时间级别 <span class="hint">（可多选，2+ 级别触发共振）</span></h3>
+        <div class="chips" id="timeframeChips"></div>
+      </section>
+
+      <section class="panel">
+        <h3>市场板块 <span class="hint">（可多选，默认不限）</span></h3>
+        <div class="chips" id="marketChips"></div>
+      </section>
+
+      <section class="panel">
+        <h3>自定义股票池（文件导入）</h3>
+        <div class="import-box">
+          <input type="file" id="importFile" accept=".txt,.csv,.tsv,.ebk,.EBK" hidden>
+          <button class="ghost-btn" id="importBtn">📄 导入 TXT/CSV/EBK</button>
+          <button class="ghost-btn" id="clearImportBtn" title="清除已导入代码">清空</button>
+        </div>
+        <div class="import-result hidden" id="importResult"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h3>蜡烛图形态</h3>
+          <span class="link" id="patternSelectAll">全选</span>
+          <span class="link" id="patternClearAll">清空</span>
+        </div>
+        <div id="patternList" class="pattern-list"></div>
+      </section>
+
+      <section class="panel">
+        <h3>附加筛选条件</h3>
+        <div class="checks">
+          <label class="check"><input type="checkbox" id="aboveMa250"> 最新股价在年线（MA250）之上</label>
+          <label class="check"><input type="checkbox" id="syncData" checked> 同步服务器数据</label>
+        </div>
+        <div class="sync-status" id="syncStatus">上次同步：—</div>
+        <div class="field">
+          <label>近一年涨停次数 ≥</label>
+          <input type="number" id="limitUpCountMin" step="1" min="0" placeholder="不限">
+        </div>
+        <div class="field">
+          <label>放量倍数 ≥</label>
+          <input type="number" id="volumeMin" step="0.1" min="1" placeholder="不限">
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>价格下限</label>
+            <input type="number" id="priceMin" step="0.01" placeholder="不限">
+          </div>
+          <div class="field">
+            <label>价格上限</label>
+            <input type="number" id="priceMax" step="0.01" placeholder="不限">
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>涨跌幅% ≥</label>
+            <input type="number" id="changeMin" step="0.1" placeholder="不限">
+          </div>
+          <div class="field">
+            <label>涨跌幅% ≤</label>
+            <input type="number" id="changeMax" step="0.1" placeholder="不限">
+          </div>
+        </div>
+        <div class="field">
+          <label>排序方式</label>
+          <select id="sortBy">
+            <option value="strength">按信号强度</option>
+            <option value="date">按出现时间</option>
+            <option value="limit_1y">按涨停次数</option>
+          </select>
+        </div>
+        <div class="checks">
+          <label class="check"><input type="checkbox" id="excludeSt" checked> 剔除 ST</label>
+          <label class="check"><input type="checkbox" id="fullMarket"> 全市场扫描（较慢）</label>
+        </div>
+      </section>
+
+      <button class="scan-btn" id="scanBtn">🔍 开始筛选</button>
+      <button class="scan-btn stop-btn hidden" id="stopBtn">⏹ 停止筛选</button>
+      <button class="ghost-btn selftest-btn" id="selftestBtn">🧪 形态引擎自检</button>
+      <div class="progress hidden" id="progressWrap">
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <div class="progress-text" id="progressText">准备中…</div>
+      </div>
+    </aside>
+
+    <!-- ===================== 右侧结果区 ===================== -->
+    <main class="content">
+      <div class="result-bar">
+        <div class="stats" id="stats">尚未扫描</div>
+        <div class="actions">
+          <span class="resonance-toggle">
+            <input type="checkbox" id="resonanceOnly"> 仅看共振
+          </span>
+          <button class="ghost-btn" id="reloadBtn" disabled>🔄 重新加载</button>
+          <button class="ghost-btn" id="exportBtn" disabled>⬇ 导出 CSV</button>
+          <button class="ghost-btn" id="reportBtn" disabled>📄 生成报告</button>
+        </div>
+      </div>
+
+      <div class="history-bar" id="historyBar">
+        <div class="history-title">🕘 历史筛选结果</div>
+        <div class="history-list" id="historyList"><span class="history-empty">暂无历史结果</span></div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="result-table" id="resultTable">
+          <thead>
+            <tr>
+              <th>代码</th>
+              <th>名称</th>
+              <th>板块</th>
+              <th>级别</th>
+              <th>形态</th>
+              <th>方向</th>
+              <th>出现日期</th>
+              <th class="sortable" data-key="strength">信号强度 ▾</th>
+              <th>放量</th>
+              <th>现价</th>
+              <th>涨跌幅</th>
+              <th>年涨停</th>
+              <th>共振</th>
+            </tr>
+          </thead>
+          <tbody id="resultBody">
+            <tr class="empty"><td colspan="13">选择条件后点击「开始筛选」</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="pagination-bar">
+        <div class="page-info" id="pageInfo">—</div>
+        <div class="page-controls">
+          <button class="ghost-btn" id="prevPage" disabled>上一页</button>
+          <span class="page-num" id="pageNum">1</span>
+          <button class="ghost-btn" id="nextPage" disabled>下一页</button>
+          <select id="pageSize">
+            <option value="20">20 条/页</option>
+            <option value="50" selected>50 条/页</option>
+            <option value="100">100 条/页</option>
+          </select>
+        </div>
+      </div>
+    </main>
+  </div>
+  </div><!-- /panel-screener -->
+
+  <!-- ===================== 市场事件面板（涨停/跌停/连板/龙虎榜 共用） ===================== -->
+  <div class="event-panel hidden" id="eventPanel">
+    <div class="event-toolbar">
+      <div class="event-title" id="eventTitle">涨停板</div>
+      <div class="event-actions">
+        <input type="date" id="eventDate" class="date-input">
+        <button class="ghost-btn" id="eventRefresh">🔄 刷新</button>
+      </div>
+    </div>
+    <div class="sub-tabs hidden" id="eventSubTabs"></div>
+    <div class="event-stats" id="eventStats"></div>
+    <div class="event-table-wrap">
+      <div id="eventContent" class="event-content"></div>
+    </div>
+  </div>
+
+  <!-- ===================== 自检结果弹窗 ===================== -->
+  <div class="modal hidden" id="selftestModal">
+    <div class="modal-backdrop" id="selftestBackdrop"></div>
+    <div class="modal-panel modal-panel-narrow">
+      <div class="modal-head">
+        <div class="modal-title">形态引擎自检结果</div>
+        <button class="close-btn" id="closeSelftest">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="selftestBody" class="selftest-body"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== 龙虎榜席位弹窗 ===================== -->
+  <div class="modal hidden" id="seatModal">
+    <div class="modal-backdrop" id="seatBackdrop"></div>
+    <div class="modal-panel modal-panel-narrow">
+      <div class="modal-head">
+        <div class="modal-title" id="seatTitle">龙虎榜席位</div>
+        <button class="close-btn" id="closeSeat">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="seatBody" class="selftest-body"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== K线详情弹窗 ===================== -->
+  <div class="modal hidden" id="klineModal">
+    <div class="modal-backdrop" id="modalBackdrop"></div>
+    <div class="modal-panel">
+      <div class="modal-head">
+        <div class="modal-title" id="modalTitle">K线详情</div>
+        <div class="modal-legend" id="modalLegend"></div>
+        <button class="close-btn" id="closeModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="klineChart" class="kline-chart"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
