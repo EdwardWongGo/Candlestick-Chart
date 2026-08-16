@@ -9,6 +9,8 @@ dist/
 
 # ---- 运行时生成数据（缓存/日志/历史/导出，均不入库） ----
 output/
+data/*
+!data/README.md
 *.csv
 *.EBK
 *.ebk

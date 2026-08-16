@@ -21,12 +21,10 @@ from ..models import Candle
 
 
 class KlineCache:
-    # 缓存 schema 版本：数据源或字段结构变更时递增，旧缓存自动失效
-    #   v2：日线 MIN_BARS 提升至 260 以支持年线 MA250
-    VERSION = "v2"
-
-    def __init__(self, root: str = "output/cache"):
-        self.root = os.path.join(root, self.VERSION)
+    # 缓存根目录：data/（结构为 data/{timeframe}/{code}.csv）
+    # 说明：早期为 output/cache/{VERSION}/ 版本化目录，现统一迁移到 data/ 目录
+    def __init__(self, root: str = "data"):
+        self.root = root
 
     def _path(self, code: str, timeframe: str) -> str:
         return os.path.join(self.root, timeframe, f"{code}.csv")

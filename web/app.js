@@ -55,7 +55,7 @@ const state = {
   scanning: false,       // 是否正在扫描
   scanStartTime: null,   // 扫描开始时间戳（用于 ETA 估算）
   lastParams: null,      // 最近一次成功扫描的参数（用于「重新加载」）
-  sortKey: 'change_pct',   // 默认按涨跌幅排序
+  sortKey: 'strength',   // 默认按信号强度排序
   sortDesc: true,
   resonanceOnly: false,
   page: 1,
@@ -290,10 +290,8 @@ async function onImportFile(e) {
       state.importNames = newNames;
     }
     showImportResult(data, file.name, mode, newCodes.length);
-    // 导入后自动用自定义股票池执行筛选：右侧栏展示结果 + 后端自动生成历史记录
-    if (state.customCodes.length) {
-      await startScan();
-    }
+    // 上传后仅在结果栏展示已上传股票列表（代码+名称两列），不自动筛选
+    renderUploadedList();
   } catch (err) {
     console.error(err);
     alert('导入失败');
@@ -301,6 +299,49 @@ async function onImportFile(e) {
     document.getElementById('importBtn').textContent = '📄 选择股票列表文件';
     e.target.value = '';
   }
+}
+
+// 结果栏展示已上传的股票列表（仅「代码」「股票名」两列）
+function renderUploadedList() {
+  const codes = state.customCodes || [];
+  const names = state.importNames || {};
+  const table = document.getElementById('resultTable');
+  const empty = document.getElementById('emptyState');
+  const tbody = document.getElementById('resultBody');
+
+  // 清空筛选结果状态，切换为「上传列表」视图
+  state.results = [];
+  state.scanStats = null;
+  state.lastParams = null;
+  state.viewingHistory = null;
+  document.getElementById('stats').textContent =
+    `📁 已上传 ${codes.length} 只股票（仅展示列表，请设置条件后点击「开始筛选」）`;
+
+  // 上传列表视图：只显示「代码」「股票名」两列
+  setTableColumns('upload');
+
+  if (!codes.length) {
+    empty.classList.remove('hidden');
+    table.classList.add('hidden');
+    updateResultButtons();
+    return;
+  }
+  empty.classList.add('hidden');
+  table.classList.remove('hidden');
+  tbody.innerHTML = codes.map((c) => `
+    <tr data-code="${c}">
+      <td class="cell-code">${c}</td>
+      <td>${names[c] || '—'}</td>
+    </tr>`).join('');
+  updateResultButtons();
+}
+
+// 切换结果表列显示：full=完整列，upload=仅「代码」「股票名」两列
+function setTableColumns(mode) {
+  document.querySelectorAll('#resultTable thead th[data-key]').forEach((th) => {
+    const isKey = th.dataset.key === 'code' || th.dataset.key === 'name';
+    th.classList.toggle('hidden', mode === 'upload' && !isKey);
+  });
 }
 
 function showImportResult(data, fname, mode, addedCount) {
@@ -315,7 +356,7 @@ function showImportResult(data, fname, mode, addedCount) {
       失败 <span class="bad">${data.invalid_count}</span> 个</div>
     ${dist ? `<div class="detail">分布：${dist}</div>` : ''}
     ${bad ? `<div class="detail">无效项：${bad}${data.invalid_count > 50 ? '…' : ''}</div>` : ''}
-    <div class="detail" style="color:var(--accent)">${modeText}，已自动开始筛选，结果见右侧栏</div>`;
+    <div class="detail" style="color:var(--accent)">${modeText}，结果栏已展示上传列表，请设置筛选条件后点击「开始筛选」</div>`;
 }
 
 function clearImport() {
@@ -339,7 +380,7 @@ function collectParams() {
     patterns: patterns.length ? patterns : null,
     verify_patterns: verifyPatterns.length ? verifyPatterns : null,   // 需要验证的形态
     above_ma250: document.getElementById('aboveMa250').checked,
-    sync: document.getElementById('syncData').checked,
+    sync: false,   // 「同步服务器数据」选项已移除，筛选仅基于本地缓存（服务器同步由「数据来源→服务器」连接触发）
     limit_up_count_min: num('limitUpCountMin'),
     volume_min: num('volumeMin'),
     price_min: num('priceMin'),
@@ -544,16 +585,8 @@ async function restoreCachedResult() {
 
 // ===================== 数据同步状态 & 历史筛选结果 =====================
 async function initSyncStatus() {
-  try {
-    const r = await fetch(API.syncStatus);
-    const d = await r.json();
-    const el = document.getElementById('syncStatus');
-    if (d.last_sync) {
-      el.textContent = `上次同步：${d.last_sync}（更新 ${d.synced_count} 项）`;
-    } else {
-      el.textContent = '上次同步：尚未同步';
-    }
-  } catch (e) { /* 忽略 */ }
+  // 「同步服务器数据」选项已移除，上次同步时间改由数据来源面板展示
+  refreshLocalStatus();
 }
 
 // ===================== 数据来源选择器（本地 / 服务器 / 上传） =====================
@@ -584,10 +617,7 @@ function onDataSourceChange() {
   document.getElementById('srcLocal').classList.toggle('hidden', val !== 'local');
   document.getElementById('srcServer').classList.toggle('hidden', val !== 'server');
   document.getElementById('srcUpload').classList.toggle('hidden', val !== 'upload');
-  // 切换数据源后自动刷新筛选（已有结果时）
-  if (state.results.length && !state.scanning) {
-    startScan();
-  }
+  // 数据来源切换仅切换面板，不自动筛选（筛选统一由「开始筛选」按钮触发）
 }
 
 async function onServerConnect() {
@@ -622,11 +652,10 @@ async function onServerConnect() {
       statusEl.textContent = `❌ 连接失败：${d.error}`;
       statusEl.className = 'src-status src-fail';
     } else {
-      statusEl.textContent = `✅ 连接成功，同步 ${d.synced ?? 0} 项`;
+      statusEl.textContent = `✅ 连接成功，同步 ${d.synced ?? 0} 项，请点击「开始筛选」`;
       statusEl.className = 'src-status src-ok';
-      // 同步完成后基于同步后的数据自动筛选
+      // 同步完成后刷新同步时间，筛选由用户点击「开始筛选」触发
       await refreshLocalStatus();
-      if (!state.scanning) startScan();
     }
   } catch (e) {
     statusEl.textContent = '❌ 连接失败，请检查网络或稍后重试';
@@ -828,7 +857,6 @@ function applyLockedParams(params, source) {
   numBack('changeMax', params.change_max);
   document.getElementById('excludeSt').checked = params.exclude_st !== false;
   document.getElementById('excludeSt').disabled = false;
-  document.getElementById('syncData').disabled = false;
 
   // 「附加筛选条件」面板：所有子项都未用时隐藏整个面板
   const extraPanel = document.getElementById('panelExtra');
@@ -881,7 +909,7 @@ function unlockParams() {
   document.querySelectorAll('.chip.locked').forEach((c) => c.classList.remove('locked'));
   document.querySelectorAll('#patternList input[type=checkbox]').forEach((cb) => { cb.disabled = false; });
   ['limitUpCountMin', 'volumeMin', 'priceMin', 'priceMax', 'changeMin', 'changeMax',
-   'aboveMa250', 'syncData', 'excludeSt'].forEach((id) => {
+   'aboveMa250', 'excludeSt'].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.disabled = false;
   });
@@ -913,6 +941,7 @@ function hideLockBar() {
 
 // ===================== 结果渲染（含分页/统计） =====================
 function renderResults() {
+  setTableColumns('full');   // 筛选结果视图：恢复完整表头列
   let list = [...state.results];
   if (state.resonanceOnly) list = list.filter((r) => r.resonance);
 
@@ -926,12 +955,11 @@ function renderResults() {
     strength: (r) => r.strength,
     volume_ratio: (r) => r.volume_ratio,
     close: (r) => r.close,
-    change_pct: (r) => r.change_pct,
     ytd_change: (r) => r.ytd_change || 0,
     limit_1y: (r) => r.limit_1y || 0,
     resonance: (r) => (r.resonance ? 1 : 0),
   };
-  const get = SORT_FIELD[state.sortKey] || SORT_FIELD.change_pct;
+  const get = SORT_FIELD[state.sortKey] || SORT_FIELD.strength;
   list.sort((a, b) => {
     const va = get(a), vb = get(b);
     if (typeof va === 'number' && typeof vb === 'number') {
@@ -977,7 +1005,6 @@ function renderResults() {
   table.classList.remove('hidden');
 
   tbody.innerHTML = pageList.map((r) => {
-    const chgCls = r.change_pct >= 0 ? 'num-up' : 'num-down';
     const ytdCls = (r.ytd_change || 0) >= 0 ? 'num-up' : 'num-down';
     const ytd = r.ytd_change != null ? `${r.ytd_change >= 0 ? '+' : ''}${r.ytd_change}%` : '—';
     const resonanceTag = r.resonance
@@ -992,7 +1019,6 @@ function renderResults() {
       <td class="strength-cell">${r.strength}</td>
       <td>${r.volume_ratio}×</td>
       <td>${r.close.toFixed(2)}</td>
-      <td class="${chgCls}">${r.change_pct >= 0 ? '+' : ''}${r.change_pct}%</td>
       <td class="${ytdCls}">${ytd}</td>
       <td>${r.limit_1y || 0}</td>
       <td>${resonanceTag}</td>
@@ -1362,7 +1388,7 @@ function generateReport() {
     <tr>
       <td>${r.code}</td><td>${r.name}</td><td>${r.market_zh}</td><td>${r.timeframe_zh}</td>
       <td>${r.pattern_zh}</td><td>${r.strength}</td><td>${r.volume_ratio}×</td>
-      <td>${r.change_pct}%</td><td>${r.resonance ? '✓' : ''}</td>
+      <td>${r.resonance ? '✓' : ''}</td>
     </tr>`).join('');
 
   const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
@@ -1394,7 +1420,7 @@ function generateReport() {
   </div>
   <h2>全部信号（${all.length} 条，按强度排序）</h2>
   <table><thead><tr>
-    <th>代码</th><th>名称</th><th>板块</th><th>级别</th><th>形态</th><th>强度</th><th>放量</th><th>涨跌</th><th>共振</th>
+    <th>代码</th><th>名称</th><th>板块</th><th>级别</th><th>形态</th><th>强度</th><th>放量</th><th>共振</th>
   </tr></thead><tbody>${rows}</tbody></table>
   ${resonanceStocks.length ? `<h2>跨级别共振股票（${resonanceStocks.length} 只）</h2><div>${resonanceStocks.map((s) => `<span class="tag">${s}</span>`).join('')}</div>` : ''}
   <div class="disclaimer">本报告由 A股量化分析工具自动生成，仅用于技术形态学习与研究，不构成任何投资建议。股市有风险，投资需谨慎。</div>

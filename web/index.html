@@ -109,9 +109,8 @@
         <h3>附加筛选条件</h3>
         <div class="checks">
           <label class="check extra-item" data-extra="above_ma250"><input type="checkbox" id="aboveMa250"> 最新股价在年线（MA250）之上</label>
-          <label class="check"><input type="checkbox" id="syncData" checked> 同步服务器数据</label>
+          <label class="check extra-item" data-extra="exclude_st"><input type="checkbox" id="excludeSt" checked> 剔除 ST</label>
         </div>
-        <div class="sync-status" id="syncStatus">上次同步：—</div>
         <div class="field extra-item" data-extra="limit_up_count_min">
           <label>近一年涨停次数 ≥</label>
           <input type="number" id="limitUpCountMin" step="1" min="0" placeholder="不限">
@@ -139,9 +138,6 @@
             <label>涨跌幅% ≤</label>
             <input type="number" id="changeMax" step="0.1" placeholder="不限">
           </div>
-        </div>
-        <div class="checks extra-item" data-extra="exclude_st">
-          <label class="check"><input type="checkbox" id="excludeSt" checked> 剔除 ST</label>
         </div>
       </section>
 
@@ -206,17 +202,16 @@
               <th class="sortable" data-key="market">板块</th>
               <th class="sortable" data-key="timeframe">级别</th>
               <th class="sortable" data-key="pattern">形态</th>
-              <th class="sortable" data-key="strength">信号强度</th>
+              <th class="sortable" data-key="strength">信号强度 <span class="sort-arrow">▾</span></th>
               <th class="sortable" data-key="volume_ratio">放量</th>
               <th class="sortable" data-key="close">现价</th>
-              <th class="sortable" data-key="change_pct">涨跌幅 <span class="sort-arrow">▾</span></th>
               <th class="sortable" data-key="ytd_change">年内涨幅</th>
               <th class="sortable" data-key="limit_1y">年涨停</th>
               <th class="sortable" data-key="resonance">共振</th>
             </tr>
           </thead>
           <tbody id="resultBody">
-            <tr class="empty"><td colspan="12">选择条件后点击「开始筛选」</td></tr>
+            <tr class="empty"><td colspan="11">选择条件后点击「开始筛选」</td></tr>
           </tbody>
         </table>
       </div>

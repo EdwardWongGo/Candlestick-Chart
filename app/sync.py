@@ -29,7 +29,7 @@ from .data.cache import KlineCache
 
 # 项目根目录（sync.py 位于 app/ 下，上溯一级）
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SYNC_META_PATH = os.path.join(BASE_DIR, "output", "cache", "sync_meta.json")
+SYNC_META_PATH = os.path.join(BASE_DIR, "data", "sync_meta.json")
 
 # 并发同步线程数（mootdx 为 TCP 短请求，8 并发约提速 2 倍）
 _SYNC_WORKERS = 8

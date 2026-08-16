@@ -250,11 +250,10 @@ def sync_status():
     # 本地缓存文件数（供「本地数据」来源判断是否可用/置灰）
     cache_files = 0
     try:
-        v2 = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                          "output", "cache", "v2")
-        if os.path.isdir(v2):
+        data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+        if os.path.isdir(data_dir):
             for tf in ("daily", "weekly", "monthly"):
-                d = os.path.join(v2, tf)
+                d = os.path.join(data_dir, tf)
                 if os.path.isdir(d):
                     cache_files += len([f for f in os.listdir(d) if f.endswith(".csv")])
     except Exception:
@@ -399,7 +398,7 @@ def export_csv():
     fieldnames = [
         "股票代码", "股票名称", "市场板块", "所属级别", "形态名称", "形态英文",
         "信号强度", "放量倍数", "现价",
-        "涨跌幅%", "年内涨幅%", "近一年涨停次数", "多级别共振",
+        "年内涨幅%", "近一年涨停次数", "多级别共振",
     ]
     buf = io.StringIO()
     writer = csv.writer(buf)
@@ -410,7 +409,7 @@ def export_csv():
             r.get("timeframe_zh"),
             r.get("pattern_zh"), r.get("pattern_en"),
             r.get("strength"), r.get("volume_ratio"), r.get("close"),
-            r.get("change_pct"), r.get("ytd_change"), r.get("limit_1y"),
+            r.get("ytd_change"), r.get("limit_1y"),
             "是" if r.get("resonance") else "否",
         ])
 

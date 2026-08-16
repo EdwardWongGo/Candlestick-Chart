@@ -270,7 +270,7 @@ class Screener:
         self._apply_resonance(results)
 
         # 5. 排序
-        sort_by = params.get("sort_by", "change_pct")   # 默认按涨跌幅排序
+        sort_by = params.get("sort_by", "strength")   # 默认按信号强度排序（涨跌幅列已移除）
         results = self._sort(results, sort_by)
 
         elapsed_ms = int((time.time() - t0) * 1000)   # 总耗时（毫秒，精确）
