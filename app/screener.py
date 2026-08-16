@@ -243,7 +243,7 @@ class Screener:
         self._apply_resonance(results)
 
         # 5. 排序
-        sort_by = params.get("sort_by", "strength")
+        sort_by = params.get("sort_by", "change_pct")   # 默认按涨跌幅排序
         results = self._sort(results, sort_by)
 
         elapsed_ms = int((time.time() - t0) * 1000)   # 总耗时（毫秒，精确）
@@ -374,6 +374,8 @@ class Screener:
             results.sort(key=lambda r: (r.date, -r.strength), reverse=True)
         elif sort_by == "limit_1y":
             results.sort(key=lambda r: (-r.limit_1y, -r.strength))
+        elif sort_by == "change_pct":
+            results.sort(key=lambda r: r.change_pct, reverse=True)
         elif sort_by == "strength":
             results.sort(key=lambda r: (r.resonance, r.strength), reverse=True)
         else:

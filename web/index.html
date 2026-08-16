@@ -97,18 +97,10 @@
             <label>涨跌幅% ≥</label>
             <input type="number" id="changeMin" step="0.1" placeholder="不限">
           </div>
-          <div class="field">
-            <label>涨跌幅% ≤</label>
-            <input type="number" id="changeMax" step="0.1" placeholder="不限">
-          </div>
-        </div>
         <div class="field">
-          <label>排序方式</label>
-          <select id="sortBy">
-            <option value="strength">按信号强度</option>
-            <option value="date">按出现时间</option>
-            <option value="limit_1y">按涨停次数</option>
-          </select>
+          <label>涨跌幅% ≤</label>
+          <input type="number" id="changeMax" step="0.1" placeholder="不限">
+          </div>
         </div>
         <div class="checks">
           <label class="check"><input type="checkbox" id="excludeSt" checked> 剔除 ST</label>
@@ -126,6 +118,19 @@
 
     <!-- ===================== 右侧结果区 ===================== -->
     <main class="content">
+      <!-- 筛选进度横幅（结果区顶部，醒目） -->
+      <div class="scan-banner hidden" id="scanBanner">
+        <div class="scan-banner-inner">
+          <span class="scan-spinner"></span>
+          <div class="scan-info">
+            <div class="scan-msg" id="scanBannerMsg">准备中…</div>
+            <div class="scan-bar"><div class="scan-fill" id="scanBannerFill"></div></div>
+          </div>
+          <span class="scan-pct" id="scanBannerPct">0%</span>
+          <button class="scan-banner-stop" id="scanBannerStop">⏹ 停止</button>
+        </div>
+      </div>
+
       <div class="result-bar">
         <div class="stats" id="stats">尚未扫描</div>
         <div class="actions">
@@ -157,19 +162,19 @@
         <table class="result-table" id="resultTable">
           <thead>
             <tr>
-              <th>代码</th>
-              <th>名称</th>
-              <th>板块</th>
-              <th>级别</th>
-              <th>形态</th>
-              <th>方向</th>
-              <th>出现日期</th>
-              <th class="sortable" data-key="strength">信号强度 ▾</th>
-              <th>放量</th>
-              <th>现价</th>
-              <th>涨跌幅</th>
-              <th>年涨停</th>
-              <th>共振</th>
+              <th class="sortable" data-key="code">代码</th>
+              <th class="sortable" data-key="name">名称</th>
+              <th class="sortable" data-key="market">板块</th>
+              <th class="sortable" data-key="timeframe">级别</th>
+              <th class="sortable" data-key="pattern">形态</th>
+              <th class="sortable" data-key="direction">方向</th>
+              <th class="sortable" data-key="date">出现日期</th>
+              <th class="sortable" data-key="strength">信号强度</th>
+              <th class="sortable" data-key="volume_ratio">放量</th>
+              <th class="sortable" data-key="close">现价</th>
+              <th class="sortable" data-key="change_pct">涨跌幅 <span class="sort-arrow">▾</span></th>
+              <th class="sortable" data-key="limit_1y">年涨停</th>
+              <th class="sortable" data-key="resonance">共振</th>
             </tr>
           </thead>
           <tbody id="resultBody">

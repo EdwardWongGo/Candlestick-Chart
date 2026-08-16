@@ -49,7 +49,7 @@ const state = {
   scanning: false,       // 是否正在扫描
   scanStartTime: null,   // 扫描开始时间戳（用于 ETA 估算）
   lastParams: null,      // 最近一次成功扫描的参数（用于「重新加载」）
-  sortKey: 'strength',
+  sortKey: 'change_pct',   // 默认按涨跌幅排序
   sortDesc: true,
   resonanceOnly: false,
   page: 1,
@@ -80,6 +80,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 function bindEvents() {
   document.getElementById('scanBtn').addEventListener('click', () => startScan());
   document.getElementById('stopBtn').addEventListener('click', stopScan);
+  document.getElementById('scanBannerStop').addEventListener('click', stopScan);
   document.getElementById('reloadBtn').addEventListener('click', reloadScan);
   document.getElementById('clearResultBtn').addEventListener('click', clearResult);
   document.getElementById('exportBtn').addEventListener('click', exportCSV);
@@ -92,14 +93,19 @@ function bindEvents() {
     state.page = 1;
     renderResults();
   });
-  document.getElementById('sortBy').addEventListener('change', (e) => {
-    state.sortKey = e.target.value;
-    state.page = 1;
-    renderResults();
-  });
-  document.querySelector('.sortable').addEventListener('click', () => {
-    state.sortDesc = !state.sortDesc;
-    renderResults();
+  // 结果表所有列点击排序
+  document.querySelectorAll('th.sortable').forEach((th) => {
+    th.addEventListener('click', () => {
+      const key = th.dataset.key;
+      if (state.sortKey === key) {
+        state.sortDesc = !state.sortDesc;   // 同列点击切换升降序
+      } else {
+        state.sortKey = key;
+        state.sortDesc = true;              // 新列默认降序
+      }
+      state.page = 1;
+      renderResults();
+    });
   });
   // 分页
   document.getElementById('prevPage').addEventListener('click', () => { state.page--; renderResults(); });
@@ -409,9 +415,18 @@ function finishScan(result, error, errlog) {
 }
 
 function showProgress(show, pct, text) {
+  // 侧边栏进度条
   document.getElementById('progressWrap').classList.toggle('hidden', !show);
   document.getElementById('progressFill').style.width = (pct || 0) + '%';
   document.getElementById('progressText').textContent = text || '';
+  // 结果区顶部醒目进度横幅
+  const banner = document.getElementById('scanBanner');
+  if (banner) {
+    banner.classList.toggle('hidden', !show);
+    document.getElementById('scanBannerFill').style.width = (pct || 0) + '%';
+    document.getElementById('scanBannerPct').textContent = (pct || 0) + '%';
+    document.getElementById('scanBannerMsg').textContent = text || '';
+  }
 }
 
 // 用最近一次成功的参数重新执行筛选（主动刷新数据）
@@ -664,17 +679,41 @@ function renderResults() {
   let list = [...state.results];
   if (state.resonanceOnly) list = list.filter((r) => r.resonance);
 
-  // 排序
+  // 排序（所有列通用）
+  const SORT_FIELD = {
+    code: (r) => r.code,
+    name: (r) => r.name,
+    market: (r) => r.market_zh || '',
+    timeframe: (r) => r.timeframe,
+    pattern: (r) => r.pattern_zh,
+    direction: (r) => r.direction,
+    date: (r) => r.date,
+    strength: (r) => r.strength,
+    volume_ratio: (r) => r.volume_ratio,
+    close: (r) => r.close,
+    change_pct: (r) => r.change_pct,
+    limit_1y: (r) => r.limit_1y || 0,
+    resonance: (r) => (r.resonance ? 1 : 0),
+  };
+  const get = SORT_FIELD[state.sortKey] || SORT_FIELD.change_pct;
   list.sort((a, b) => {
-    let va, vb;
-    if (state.sortKey === 'date') {
-      va = a.date + a.code; vb = b.date + b.code;
-    } else {
-      va = a.strength; vb = b.strength;
-      if (va === vb) { va = a.date; vb = b.date; }
+    const va = get(a), vb = get(b);
+    if (typeof va === 'number' && typeof vb === 'number') {
+      return state.sortDesc ? vb - va : va - vb;
     }
-    if (typeof va === 'number') return state.sortDesc ? vb - va : va - vb;
-    return state.sortDesc ? vb.localeCompare(va) : va.localeCompare(vb);
+    const sa = String(va), sb = String(vb);
+    return state.sortDesc ? sb.localeCompare(sa) : sa.localeCompare(sb);
+  });
+  // 更新表头排序箭头
+  document.querySelectorAll('th.sortable').forEach((th) => {
+    const arrow = th.querySelector('.sort-arrow');
+    if (th.dataset.key === state.sortKey) {
+      th.classList.add('sorted');
+      if (arrow) arrow.textContent = state.sortDesc ? '▾' : '▴';
+    } else {
+      th.classList.remove('sorted');
+      if (arrow) arrow.textContent = '';
+    }
   });
 
   renderStats();

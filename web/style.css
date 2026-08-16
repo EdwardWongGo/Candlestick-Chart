@@ -285,8 +285,33 @@ body {
 .sidebar.scanning > .stop-btn { pointer-events: auto; opacity: 1; }
 .sidebar.scanning .progress { pointer-events: none; }
 
-/* 筛选期间禁用结果栏交互（结束后恢复） */
+/* 筛选期间禁用结果栏交互（结束后恢复）；但进度横幅的停止按钮保持可点 */
 .content.scanning { pointer-events: none; opacity: .5; }
+.content.scanning .scan-banner { pointer-events: auto; opacity: 1; }
+
+/* ===== 扫描进度横幅（结果区顶部） ===== */
+.scan-banner {
+  position: sticky; top: 0; z-index: 6;
+  padding: 10px 16px; background: var(--bg-panel);
+  border-bottom: 1px solid var(--accent);
+}
+.scan-banner-inner { display: flex; align-items: center; gap: 12px; }
+.scan-spinner {
+  width: 16px; height: 16px; border: 2px solid var(--border);
+  border-top-color: var(--accent); border-radius: 50%;
+  animation: spin .8s linear infinite; flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.scan-info { flex: 1; min-width: 0; }
+.scan-msg { font-size: 12px; color: var(--text); margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scan-bar { height: 8px; background: var(--bg-card); border-radius: 4px; overflow: hidden; }
+.scan-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), #4a8dff); transition: width .3s; }
+.scan-pct { font-size: 13px; font-weight: 700; color: var(--accent); min-width: 42px; text-align: right; flex-shrink: 0; }
+.scan-banner-stop {
+  padding: 5px 10px; border-radius: 6px; border: 1px solid var(--accent);
+  background: transparent; color: #bcd4ff; cursor: pointer; font-size: 12px; flex-shrink: 0;
+}
+.scan-banner-stop:hover { background: var(--accent-bg); }
 
 /* ===== 结果栏 ===== */
 .result-bar {
@@ -354,8 +379,10 @@ body {
   padding: 10px 12px; border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
-.result-table thead th.sortable { cursor: pointer; }
+.result-table thead th.sortable { cursor: pointer; user-select: none; }
 .result-table thead th.sortable:hover { color: var(--text); }
+.result-table thead th.sorted { color: var(--accent); }
+.sort-arrow { font-size: 10px; margin-left: 2px; color: var(--accent); }
 .result-table tbody td {
   padding: 10px 12px; border-bottom: 1px solid rgba(42,52,68,.5);
   font-size: 12px; white-space: nowrap;
