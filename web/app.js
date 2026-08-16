@@ -40,6 +40,8 @@ const state = {
   scanStats: null,
   scanElapsedMs: null,  // 本次筛选总耗时（毫秒）
   viewingHistory: null,  // 当前查看的历史记录 {id, ts}，null=非历史视图
+  lockedParams: null,    // 锁定的历史筛选条件（基于历史记录继续筛选时锁定，只能追加）
+  lockSource: null,      // 锁定来源描述（历史记录时间）
   customCodes: [],       // 导入的自定义股票代码
   importNames: {},       // 导入代码的名称
   jobId: null,
@@ -137,7 +139,10 @@ function renderTimeframes() {
     chip.className = 'chip' + (i === 0 ? ' active' : '');
     chip.dataset.key = tf.key;
     chip.textContent = tf.zh;
-    chip.addEventListener('click', () => chip.classList.toggle('active'));
+    chip.addEventListener('click', () => {
+      if (chip.classList.contains('locked')) return;  // 锁定条件不可切换
+      chip.classList.toggle('active');
+    });
     box.appendChild(chip);
   });
 }
@@ -150,7 +155,10 @@ function renderMarkets() {
     chip.className = 'chip';   // 默认不选中 = 不限
     chip.dataset.key = m.key;
     chip.textContent = m.zh;
-    chip.addEventListener('click', () => chip.classList.toggle('active'));
+    chip.addEventListener('click', () => {
+      if (chip.classList.contains('locked')) return;  // 锁定条件不可切换
+      chip.classList.toggle('active');
+    });
     box.appendChild(chip);
   });
 }
@@ -412,12 +420,13 @@ function reloadScan() {
   startScan(state.lastParams);
 }
 
-// 清空当前结果，回到「暂无结果」空状态（从历史视图返回）
+// 清空当前结果，回到「暂无结果」空状态（从历史视图返回，同时解除条件锁定）
 function clearResult() {
   state.results = [];
   state.scanStats = null;
   state.viewingHistory = null;
   state.page = 1;
+  if (state.lockedParams) unlockParams();  // 返回空状态即解除锁定
   renderResults();
   updateResultButtons();
 }
@@ -480,10 +489,12 @@ async function loadHistory() {
     box.innerHTML = list.map((h) => {
       const tf = (h.timeframes || []).map(lvTf).join('/') || '—';
       const mk = (h.markets || []).map(marketZh).join('/') || '全部市场';
+      const cost = h.elapsed_ms != null ? `<span class="hi-cost">⏱ ${formatMs(h.elapsed_ms)}</span>` : '';
       return `<div class="history-item" data-id="${h.id}" title="点击加载该结果">
         <input type="checkbox" class="hi-check" data-id="${h.id}">
         <span class="hi-time">${h.ts}</span>
         <span class="hi-meta">${tf} · ${mk} · 命中 <b>${h.matched_rows}</b> 条</span>
+        ${cost}
         <span class="hi-del" data-del="${h.id}" title="删除">✕</span>
       </div>`;
     }).join('');
@@ -538,6 +549,8 @@ async function loadHistoryItem(id) {
     state.lastParams = d.params || null;
     state.viewingHistory = { id, ts: d.ts };
     state.page = 1;
+    // 基于历史记录继续筛选：回填并锁定该历史记录的筛选条件（只能追加，不能删改）
+    applyLockedParams(d.params || {}, d.ts || '');
     renderResults();
     updateResultButtons();
     // 统计栏提示当前查看的是历史结果
@@ -551,6 +564,99 @@ async function loadHistoryItem(id) {
   } catch (e) {
     alert('加载历史结果失败');
   }
+}
+
+// ===================== 筛选条件锁定（基于历史记录继续筛选） =====================
+function applyLockedParams(params, source) {
+  state.lockedParams = params;
+  state.lockSource = source;
+
+  // 时间级别：已选中的锁定，未选中的可追加
+  const tfSel = new Set(params.timeframes || []);
+  document.querySelectorAll('#timeframeChips .chip').forEach((chip) => {
+    const on = tfSel.has(chip.dataset.key);
+    chip.classList.toggle('active', on);
+    chip.classList.toggle('locked', on);
+  });
+
+  // 市场：已选中的锁定
+  const mkSel = new Set(params.markets || []);
+  document.querySelectorAll('#marketChips .chip').forEach((chip) => {
+    const on = mkSel.has(chip.dataset.key);
+    chip.classList.toggle('active', on);
+    chip.classList.toggle('locked', on);
+  });
+
+  // 形态：历史有限制则选中项锁定、其余可追加；历史无限制（全部）则全锁定
+  const patSel = params.patterns && params.patterns.length ? new Set(params.patterns) : null;
+  document.querySelectorAll('#patternList input[type=checkbox]').forEach((cb) => {
+    if (patSel === null) {
+      cb.checked = true;
+      cb.disabled = true;
+    } else if (patSel.has(cb.dataset.key)) {
+      cb.checked = true;
+      cb.disabled = true;
+    } else {
+      cb.checked = false;
+      cb.disabled = false;
+    }
+  });
+
+  // 附加条件（单值）：历史有值则回填并锁定，无值则留空可追加
+  const lockNum = (id, v) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.value = (v != null && v !== '') ? v : '';
+      el.disabled = (v != null && v !== '');
+    }
+  };
+  lockNum('limitUpCountMin', params.limit_up_count_min);
+  lockNum('volumeMin', params.volume_min);
+  lockNum('priceMin', params.price_min);
+  lockNum('priceMax', params.price_max);
+  lockNum('changeMin', params.change_min);
+  lockNum('changeMax', params.change_max);
+
+  // 布尔条件：锁定为历史值
+  ['aboveMa250', 'syncData'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) { el.checked = !!params[id === 'aboveMa250' ? 'above_ma250' : 'sync']; el.disabled = true; }
+  });
+  const exEl = document.getElementById('excludeSt');
+  if (exEl) { exEl.checked = params.exclude_st !== false; exEl.disabled = true; }
+
+  showLockBar(source);
+}
+
+function unlockParams() {
+  state.lockedParams = null;
+  state.lockSource = null;
+  document.querySelectorAll('.chip.locked').forEach((c) => c.classList.remove('locked'));
+  document.querySelectorAll('#patternList input[type=checkbox]').forEach((cb) => { cb.disabled = false; });
+  ['limitUpCountMin', 'volumeMin', 'priceMin', 'priceMax', 'changeMin', 'changeMax',
+   'aboveMa250', 'syncData', 'excludeSt'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = false;
+  });
+  hideLockBar();
+}
+
+function showLockBar(source) {
+  let bar = document.getElementById('lockBar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'lockBar';
+    bar.className = 'lock-bar';
+    const sidebar = document.querySelector('.sidebar');
+    sidebar.insertBefore(bar, sidebar.firstChild);
+  }
+  bar.innerHTML = `🔒 已锁定历史条件 <b>${source}</b>（不可删改，仅可追加）　<a href="#" id="unlockBtn">解除锁定</a>`;
+  document.getElementById('unlockBtn').addEventListener('click', (e) => { e.preventDefault(); unlockParams(); });
+}
+
+function hideLockBar() {
+  const bar = document.getElementById('lockBar');
+  if (bar) bar.remove();
 }
 
 // ===================== 结果渲染（含分页/统计） =====================

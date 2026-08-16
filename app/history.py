@@ -38,6 +38,7 @@ def save_history(params: dict, result: dict) -> Optional[dict]:
             "params": params,
             "stats": result.get("stats") or {},
             "results": result.get("results") or [],
+            "elapsed_ms": result.get("elapsed_ms"),   # 本次筛选总耗时（毫秒）
         }
         with open(path, "w", encoding="utf-8") as f:
             json.dump(record, f, ensure_ascii=False)
@@ -146,4 +147,5 @@ def _summary(rec: dict) -> dict:
         "matched_rows": stats.get("matched_rows", 0),
         "matched_stocks": stats.get("matched_stocks", 0),
         "total_samples": stats.get("total_samples", 0),
+        "elapsed_ms": rec.get("elapsed_ms"),   # 本次筛选耗时（毫秒），旧记录可能无此字段
     }

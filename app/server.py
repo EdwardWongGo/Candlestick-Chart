@@ -305,11 +305,18 @@ def kline(code):
     if tf not in config.TIMEFRAMES:
         return jsonify({"error": "未知级别"}), 400
 
-    bars = _cache.get(code, tf)
+    # K 线历史是追加式的，忽略 ttl 直接用本地缓存（避免缓存过期后重复拉取）
+    bars = _cache.get(code, tf, ttl=None)
     if bars is None:
-        bars = get_source().get_bars(code, tf, config.KLINE_OFFSET)
+        try:
+            bars = get_source().get_bars(code, tf, config.KLINE_OFFSET)
+        except Exception:
+            bars = None
         if bars:
-            _cache.set(code, tf, bars)
+            try:
+                _cache.set(code, tf, bars)   # 写缓存失败不影响返回（文件锁等）
+            except Exception:
+                pass
 
     if not bars:
         return jsonify({"error": f"{code} 无 K 线数据"}), 404

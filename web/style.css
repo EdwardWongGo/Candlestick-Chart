@@ -208,6 +208,20 @@ body {
 }
 .chip:hover { border-color: var(--accent); color: var(--text); }
 .chip.active { background: var(--accent-bg); border-color: var(--accent); color: #bcd4ff; }
+.chip.locked {
+  cursor: not-allowed; opacity: .65;
+  background: var(--accent-bg); border-color: var(--accent); color: #bcd4ff;
+  position: relative;
+}
+.chip.locked::after { content: '🔒'; font-size: 9px; margin-left: 4px; opacity: .8; }
+/* 锁定提示栏 */
+.lock-bar {
+  padding: 8px 12px; margin-bottom: 10px; border-radius: 6px;
+  background: var(--accent-bg); border: 1px solid var(--accent);
+  font-size: 12px; color: #bcd4ff; line-height: 1.5;
+}
+.lock-bar a { color: #fff; font-weight: 600; text-decoration: underline; }
+.lock-bar b { color: #fff; }
 
 /* ===== 形态列表 ===== */
 .pattern-list { max-height: 260px; overflow-y: auto; }
@@ -310,6 +324,7 @@ body {
 .history-item:hover { border-color: var(--accent); color: var(--text); }
 .history-item .hi-time { color: var(--text); }
 .history-item .hi-meta b { color: var(--up); }
+.history-item .hi-cost { color: var(--text-faint); font-size: 10px; }
 .history-item .hi-del { color: var(--text-faint); padding: 0 2px; }
 .history-item .hi-del:hover { color: var(--up); }
 .history-item .hi-check { accent-color: var(--accent); cursor: pointer; }
