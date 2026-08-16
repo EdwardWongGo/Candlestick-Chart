@@ -38,6 +38,50 @@
   <div class="layout">
     <!-- ===================== 左侧筛选面板 ===================== -->
     <aside class="sidebar">
+      <section class="panel" id="dataSourcePanel">
+        <h3>数据来源</h3>
+        <select id="dataSource" class="src-select">
+          <option value="local">💾 本地数据</option>
+          <option value="server">🌐 服务器</option>
+          <option value="upload">📁 上传文件</option>
+        </select>
+
+        <!-- 本地数据 -->
+        <div id="srcLocal" class="src-panel">
+          <div class="src-hint" id="srcSyncTime">上次同步：—</div>
+        </div>
+
+        <!-- 服务器 -->
+        <div id="srcServer" class="src-panel hidden">
+          <div class="src-row">
+            <input id="serverAddr" class="src-input" placeholder="服务器地址（留空=默认）" list="serverHistory" autocomplete="off">
+            <datalist id="serverHistory"></datalist>
+          </div>
+          <div class="src-row src-row-center">
+            <button class="ghost-btn" id="serverConnect">🔌 连接</button>
+            <span id="serverStatus" class="src-status"></span>
+          </div>
+          <div class="progress hidden" id="serverProgress">
+            <div class="progress-bar"><div class="progress-fill" id="serverProgressFill"></div></div>
+            <div class="progress-text" id="serverProgressText">同步中…</div>
+          </div>
+        </div>
+
+        <!-- 上传文件 -->
+        <div id="srcUpload" class="src-panel hidden">
+          <div class="src-row">
+            <input type="file" id="importFile" accept=".txt,.csv,.tsv,.ebk,.EBK" hidden>
+            <button class="ghost-btn" id="importBtn">📄 选择股票列表文件</button>
+            <button class="ghost-btn" id="clearImportBtn" title="清除已导入代码">清空</button>
+          </div>
+          <div class="src-row src-mode">
+            <label class="dir-opt"><input type="radio" name="uploadMode" value="replace" checked> 替换当前范围</label>
+            <label class="dir-opt"><input type="radio" name="uploadMode" value="merge"> 合并到当前范围</label>
+          </div>
+          <div class="import-result hidden" id="importResult"></div>
+        </div>
+      </section>
+
       <section class="panel">
         <h3>时间级别 <span class="hint">（可多选，2+ 级别触发共振）</span></h3>
         <div class="chips" id="timeframeChips"></div>
@@ -46,16 +90,6 @@
       <section class="panel">
         <h3>市场板块 <span class="hint">（可多选，默认不限）</span></h3>
         <div class="chips" id="marketChips"></div>
-      </section>
-
-      <section class="panel">
-        <h3>自定义股票池（文件导入）</h3>
-        <div class="import-box">
-          <input type="file" id="importFile" accept=".txt,.csv,.tsv,.ebk,.EBK" hidden>
-          <button class="ghost-btn" id="importBtn">📄 导入 TXT/CSV/EBK</button>
-          <button class="ghost-btn" id="clearImportBtn" title="清除已导入代码">清空</button>
-        </div>
-        <div class="import-result hidden" id="importResult"></div>
       </section>
 
       <section class="panel">

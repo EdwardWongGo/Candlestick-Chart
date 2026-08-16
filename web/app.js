@@ -7,6 +7,7 @@ const API = {
   scanCancel: (id) => `/api/scan/cancel/${id}`,
   scanLast: '/api/scan/last',
   syncStatus: '/api/sync/status',
+  sync: '/api/sync',
   history: '/api/history',
   historyItem: (id) => `/api/history/${id}`,
   kline: (code, tf) => `/api/kline/${code}?tf=${tf}`,
@@ -45,6 +46,9 @@ const state = {
   lockSource: null,      // 锁定来源描述（历史记录时间）
   customCodes: [],       // 导入的自定义股票代码
   importNames: {},       // 导入代码的名称
+  dataSource: 'local',   // 数据来源：local(本地) / server(服务器) / upload(上传文件)
+  serverHistory: [],     // 服务器地址历史记录
+  serverSyncing: false,  // 服务器同步中
   jobId: null,
   pollTimer: null,
   scanning: false,       // 是否正在扫描
@@ -72,6 +76,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initEventDate();
     restoreCachedResult();   // 恢复最近一次筛选结果（无需重新计算）
     initSyncStatus();        // 显示上次数据同步时间
+    initDataSource();        // 数据来源选择器（本地/服务器/上传）
     loadHistory();           // 加载历史筛选结果栏
   } catch (e) {
     console.error('加载元信息失败', e);
@@ -117,6 +122,9 @@ function bindEvents() {
     state.page = 1;
     renderResults();
   });
+  // 数据来源切换
+  document.getElementById('dataSource').addEventListener('change', onDataSourceChange);
+  document.getElementById('serverConnect').addEventListener('click', onServerConnect);
   // 文件导入
   document.getElementById('importBtn').addEventListener('click', () => document.getElementById('importFile').click());
   document.getElementById('importFile').addEventListener('change', onImportFile);
@@ -264,9 +272,23 @@ async function onImportFile(e) {
       body: JSON.stringify({ text }),
     });
     const data = await r.json();
-    state.customCodes = data.valid_codes || [];
-    state.importNames = data.names || {};
-    showImportResult(data, file.name);
+    const newCodes = data.valid_codes || [];
+    const newNames = data.names || {};
+    // 替换 / 合并当前筛选范围
+    const mode = document.querySelector('input[name="uploadMode"]:checked')?.value || 'replace';
+    if (mode === 'merge' && state.customCodes.length) {
+      const merged = [...state.customCodes];
+      const seen = new Set(merged);
+      for (const c of newCodes) {
+        if (!seen.has(c)) { merged.push(c); seen.add(c); }
+      }
+      state.customCodes = merged;
+      state.importNames = { ...state.importNames, ...newNames };
+    } else {
+      state.customCodes = newCodes;
+      state.importNames = newNames;
+    }
+    showImportResult(data, file.name, mode, newCodes.length);
     // 导入后自动用自定义股票池执行筛选：右侧栏展示结果 + 后端自动生成历史记录
     if (state.customCodes.length) {
       await startScan();
@@ -275,23 +297,24 @@ async function onImportFile(e) {
     console.error(err);
     alert('导入失败');
   } finally {
-    document.getElementById('importBtn').textContent = '📄 导入 TXT/CSV/EBK';
+    document.getElementById('importBtn').textContent = '📄 选择股票列表文件';
     e.target.value = '';
   }
 }
 
-function showImportResult(data, fname) {
+function showImportResult(data, fname, mode, addedCount) {
   const box = document.getElementById('importResult');
   box.classList.remove('hidden');
   const dist = Object.entries(data.market_dist || {})
     .map(([k, v]) => `${marketZh(k)} ${v}`).join(' · ');
   const bad = (data.invalid_entries || []).join('、');
+  const modeText = mode === 'merge' ? `已合并 ${addedCount} 个（当前共 ${state.customCodes.length} 个）` : `已替换（共 ${state.customCodes.length} 个）`;
   box.innerHTML = `
     <div>文件「${fname}」：成功 <span class="ok">${data.valid_count}</span> 个，
       失败 <span class="bad">${data.invalid_count}</span> 个</div>
     ${dist ? `<div class="detail">分布：${dist}</div>` : ''}
     ${bad ? `<div class="detail">无效项：${bad}${data.invalid_count > 50 ? '…' : ''}</div>` : ''}
-    <div class="detail" style="color:var(--accent)">已作为「自定义股票池」自动开始筛选，结果见右侧栏</div>`;
+    <div class="detail" style="color:var(--accent)">${modeText}，已自动开始筛选，结果见右侧栏</div>`;
 }
 
 function clearImport() {
@@ -480,9 +503,16 @@ function clearResult() {
   state.viewingHistory = null;
   state.page = 1;
   if (state.lockedParams) unlockParams();  // 返回空状态即解除锁定
+  setDataSourceVisible(true);  // 离开历史视图，恢复显示「数据来源」选择项
   document.querySelectorAll('.history-item.selected').forEach((el) => el.classList.remove('selected'));
   renderResults();
   updateResultButtons();
+}
+
+// 显示/隐藏「数据来源」面板（历史数据视图下隐藏，避免误操作）
+function setDataSourceVisible(visible) {
+  const panel = document.getElementById('dataSourcePanel');
+  if (panel) panel.classList.toggle('hidden', !visible);
 }
 
 // 统一更新结果区按钮可用状态
@@ -523,6 +553,88 @@ async function initSyncStatus() {
       el.textContent = '上次同步：尚未同步';
     }
   } catch (e) { /* 忽略 */ }
+}
+
+// ===================== 数据来源选择器（本地 / 服务器 / 上传） =====================
+function initDataSource() {
+  refreshLocalStatus();   // 刷新上次同步时间 + 缓存空检测
+}
+
+async function refreshLocalStatus() {
+  try {
+    const r = await fetch(API.syncStatus);
+    const d = await r.json();
+    const el = document.getElementById('srcSyncTime');
+    if (el) {
+      const files = d.cache_files ?? 0;
+      el.textContent = d.last_sync
+        ? `上次同步：${d.last_sync} · 本地缓存 ${files} 个文件`
+        : `上次同步：尚未同步 · 本地缓存 ${files} 个文件`;
+    }
+    // 本地缓存为空 → 「本地数据」选项置灰禁用
+    const localOpt = document.querySelector('#dataSource option[value="local"]');
+    if (localOpt) localOpt.disabled = !(d.cache_files > 0);
+  } catch (e) { /* 忽略 */ }
+}
+
+function onDataSourceChange() {
+  const val = document.getElementById('dataSource').value;
+  state.dataSource = val;
+  document.getElementById('srcLocal').classList.toggle('hidden', val !== 'local');
+  document.getElementById('srcServer').classList.toggle('hidden', val !== 'server');
+  document.getElementById('srcUpload').classList.toggle('hidden', val !== 'upload');
+  // 切换数据源后自动刷新筛选（已有结果时）
+  if (state.results.length && !state.scanning) {
+    startScan();
+  }
+}
+
+async function onServerConnect() {
+  if (state.serverSyncing) return;
+  const addr = document.getElementById('serverAddr').value.trim();
+  // 记录服务器地址历史（供 datalist 选择）
+  if (addr && !state.serverHistory.includes(addr)) {
+    state.serverHistory.unshift(addr);
+    state.serverHistory = state.serverHistory.slice(0, 8);
+    document.getElementById('serverHistory').innerHTML =
+      state.serverHistory.map((a) => `<option value="${a}"></option>`).join('');
+  }
+  state.serverSyncing = true;
+  const statusEl = document.getElementById('serverStatus');
+  const progressEl = document.getElementById('serverProgress');
+  const btn = document.getElementById('serverConnect');
+  statusEl.textContent = '连接中…';
+  statusEl.className = 'src-status';
+  progressEl.classList.remove('hidden');
+  document.getElementById('serverProgressText').textContent = '同步中（全市场约需数十秒）…';
+  btn.disabled = true;
+
+  try {
+    const tfs = [...document.querySelectorAll('#timeframeChips .chip.active')].map((c) => c.dataset.key);
+    const r = await fetch(API.sync, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ server: addr || null, timeframes: tfs.length ? tfs : ['daily'] }),
+    });
+    const d = await r.json();
+    if (d.error) {
+      statusEl.textContent = `❌ 连接失败：${d.error}`;
+      statusEl.className = 'src-status src-fail';
+    } else {
+      statusEl.textContent = `✅ 连接成功，同步 ${d.synced ?? 0} 项`;
+      statusEl.className = 'src-status src-ok';
+      // 同步完成后基于同步后的数据自动筛选
+      await refreshLocalStatus();
+      if (!state.scanning) startScan();
+    }
+  } catch (e) {
+    statusEl.textContent = '❌ 连接失败，请检查网络或稍后重试';
+    statusEl.className = 'src-status src-fail';
+  } finally {
+    state.serverSyncing = false;
+    btn.disabled = false;
+    progressEl.classList.add('hidden');
+  }
 }
 
 async function loadHistory() {
@@ -614,6 +726,8 @@ async function loadHistoryItem(id) {
     state.lastParams = d.params || null;
     state.viewingHistory = { id, ts: d.ts };
     state.page = 1;
+    // 历史数据视图：隐藏「数据来源」选择项，避免误操作
+    setDataSourceVisible(false);
     // 高亮选中的历史记录项（标识当前操作对象）
     document.querySelectorAll('.history-item').forEach((el) => {
       el.classList.toggle('selected', el.dataset.id === id);

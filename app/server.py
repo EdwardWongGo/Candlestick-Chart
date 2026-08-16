@@ -245,16 +245,41 @@ def scan_last():
 # ---------------------------------------------------------------------------
 @app.route("/api/sync/status")
 def sync_status():
-    """返回上次数据同步时间与同步统计。"""
-    return jsonify(get_sync_status())
+    """返回上次数据同步时间、同步统计与本地缓存状态。"""
+    st = get_sync_status()
+    # 本地缓存文件数（供「本地数据」来源判断是否可用/置灰）
+    cache_files = 0
+    try:
+        v2 = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "output", "cache", "v2")
+        if os.path.isdir(v2):
+            for tf in ("daily", "weekly", "monthly"):
+                d = os.path.join(v2, tf)
+                if os.path.isdir(d):
+                    cache_files += len([f for f in os.listdir(d) if f.endswith(".csv")])
+    except Exception:
+        pass
+    st["cache_files"] = cache_files
+    return jsonify(st)
 
 
 @app.route("/api/sync", methods=["POST"])
 def sync_now():
-    """手动触发一次数据同步（默认同步本地全市场股票池）。"""
+    """手动触发一次数据同步（默认同步本地全市场股票池，可指定服务器地址）。"""
     body = request.get_json(silent=True) or {}
     codes = body.get("codes") or None
-    timeframes = body.get("timeframes") or ["daily"]
+    timeframes = body.get("timeframes") or ["daily", "weekly", "monthly"]
+    server = body.get("server")   # 可选服务器地址，形如 "host:port"
+
+    # 解析服务器地址为 [(host, port)]，供 mootdx 使用；解析失败则用默认
+    custom_server = None
+    if server:
+        try:
+            host, port = str(server).rsplit(":", 1)
+            custom_server = [(host.strip(), int(port))]
+        except Exception:
+            custom_server = None
+
     if codes:
         from .data.universe import Universe
         u = Universe().from_list(codes)
@@ -262,8 +287,11 @@ def sync_now():
     else:
         from .data.universe import load_universe
         codes = load_universe().codes
-    result = sync_incremental(codes, timeframes)
-    return jsonify(result)
+    try:
+        result = sync_incremental(codes, timeframes, server=custom_server)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": f"同步失败：{e}", "synced": 0, "failed": 0}), 500
 
 
 # ---------------------------------------------------------------------------

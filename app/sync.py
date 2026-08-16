@@ -72,17 +72,19 @@ def get_sync_status() -> dict:
 # ---------------------------------------------------------------------------
 def sync_incremental(codes: List[str], timeframes: List[str],
                      progress_cb: Optional[Callable[[int, int, str], None]] = None,
-                     cancel_cb: Optional[Callable[[], bool]] = None) -> dict:
+                     cancel_cb: Optional[Callable[[], bool]] = None,
+                     server: Optional[list] = None) -> dict:
     """把给定股票池的最新 K 线增量同步到本地缓存（多线程并发拉取）。
 
     codes:      股票代码列表
     timeframes: 需要同步的级别（daily/weekly/monthly）
     progress_cb: 进度回调 (done, total, msg)
     cancel_cb:  取消回调，返回 True 时中断（返回 cancelled=True，不抛异常）
+    server:     自定义服务器 [(host, port), ...]，None=自动选最快
 
     返回 {synced, failed, elapsed, last_sync, cancelled}
     """
-    source = get_source()
+    source = get_source(server=server) if server else get_source()
     cache = KlineCache()
     t0 = time.time()
 

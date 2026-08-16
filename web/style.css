@@ -451,6 +451,31 @@ body {
 .import-result .bad { color: var(--up); font-weight: 600; }
 .import-result .detail { color: var(--text-dim); margin-top: 6px; word-break: break-all; }
 
+/* ===== 数据来源选择器 ===== */
+.src-select {
+  width: 100%; padding: 8px 10px; border-radius: 6px; font-size: 13px;
+  background: var(--bg-card); border: 1px solid var(--border); color: var(--text);
+  cursor: pointer; margin-bottom: 10px;
+}
+.src-panel { margin-top: 4px; }
+.src-hint { font-size: 11px; color: var(--text-dim); }
+.src-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.src-row-center { align-items: center; }
+.src-input {
+  flex: 1; min-width: 0; padding: 8px 10px; border-radius: 6px; font-size: 12px;
+  background: var(--bg-card); border: 1px solid var(--border); color: var(--text);
+}
+.src-input:focus { border-color: var(--accent); outline: none; }
+.src-status { font-size: 12px; }
+.src-status.src-ok { color: var(--up); }
+.src-status.src-fail { color: var(--down); }
+.src-mode { display: flex; gap: 14px; flex-wrap: wrap; }
+/* 触控友好：小屏下按钮/输入增大 */
+@media (max-width: 768px) {
+  .src-select, .src-input { padding: 11px 12px; font-size: 14px; }
+  .src-row .ghost-btn { padding: 9px 12px; }
+}
+
 /* ===== 自检按钮 ===== */
 .selftest-btn { width: 100%; margin-top: 8px; }
 

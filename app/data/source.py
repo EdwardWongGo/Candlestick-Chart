@@ -41,16 +41,20 @@ class MootdxSource(DataSource):
 
     name = "mootdx"
 
-    def __init__(self):
+    def __init__(self, server: Optional[list] = None):
         self._local = threading.local()   # 线程本地 client，支持多线程并发拉取
+        self._server = server             # 自定义服务器 [(host, port), ...]，None=自动选最快
 
     @property
     def client(self):
         # 线程本地 client：多线程并发拉取时各自持有独立连接，互不干扰
         if not hasattr(self._local, "client"):
             from mootdx.quotes import Quotes
-            # 用最快服务器，缓存 client
-            self._local.client = Quotes.factory(market="std")
+            # 有自定义服务器则用之，否则自动选最快服务器，缓存 client
+            if self._server:
+                self._local.client = Quotes.factory(market="std", server=self._server)
+            else:
+                self._local.client = Quotes.factory(market="std")
         return self._local.client
 
     def _frequency(self, timeframe: str) -> int:
@@ -186,9 +190,11 @@ def _fmt_dt(dt) -> Optional[str]:
 _SOURCE = None
 
 
-def get_source(kind: str = None) -> DataSource:
-    """获取数据源单例。"""
+def get_source(kind: str = None, server: Optional[list] = None) -> DataSource:
+    """获取数据源单例。server 为自定义服务器 [(host, port), ...]，None=自动选最快。"""
     global _SOURCE
+    if server is not None:
+        return MootdxSource(server=server)   # 自定义服务器：不缓存单例，每次新建
     if _SOURCE is None:
         kind = kind or config.DATA_SOURCE
         _SOURCE = MootdxSource() if kind == "mootdx" else MootdxSource()
