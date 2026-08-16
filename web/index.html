@@ -82,17 +82,17 @@
         </div>
       </section>
 
-      <section class="panel">
+      <section class="panel" id="panelTimeframe">
         <h3>时间级别 <span class="hint">（可多选，2+ 级别触发共振）</span></h3>
         <div class="chips" id="timeframeChips"></div>
       </section>
 
-      <section class="panel">
+      <section class="panel" id="panelMarket">
         <h3>市场板块 <span class="hint">（可多选，默认不限）</span></h3>
         <div class="chips" id="marketChips"></div>
       </section>
 
-      <section class="panel">
+      <section class="panel" id="panelPattern">
         <div class="panel-head">
           <h3>蜡烛图形态</h3>
           <span class="link" id="patternSelectAll">全选</span>
@@ -105,22 +105,22 @@
         <div id="patternList" class="pattern-list"></div>
       </section>
 
-      <section class="panel">
+      <section class="panel" id="panelExtra">
         <h3>附加筛选条件</h3>
         <div class="checks">
-          <label class="check"><input type="checkbox" id="aboveMa250"> 最新股价在年线（MA250）之上</label>
+          <label class="check extra-item" data-extra="above_ma250"><input type="checkbox" id="aboveMa250"> 最新股价在年线（MA250）之上</label>
           <label class="check"><input type="checkbox" id="syncData" checked> 同步服务器数据</label>
         </div>
         <div class="sync-status" id="syncStatus">上次同步：—</div>
-        <div class="field">
+        <div class="field extra-item" data-extra="limit_up_count_min">
           <label>近一年涨停次数 ≥</label>
           <input type="number" id="limitUpCountMin" step="1" min="0" placeholder="不限">
         </div>
-        <div class="field">
+        <div class="field extra-item" data-extra="volume_min">
           <label>放量倍数 ≥</label>
           <input type="number" id="volumeMin" step="0.1" min="1" placeholder="不限">
         </div>
-        <div class="field-row">
+        <div class="field-row extra-item" data-extra="price">
           <div class="field">
             <label>价格下限</label>
             <input type="number" id="priceMin" step="0.01" placeholder="不限">
@@ -130,17 +130,17 @@
             <input type="number" id="priceMax" step="0.01" placeholder="不限">
           </div>
         </div>
-        <div class="field-row">
+        <div class="field-row extra-item" data-extra="change">
           <div class="field">
             <label>涨跌幅% ≥</label>
             <input type="number" id="changeMin" step="0.1" placeholder="不限">
           </div>
-        <div class="field">
-          <label>涨跌幅% ≤</label>
-          <input type="number" id="changeMax" step="0.1" placeholder="不限">
+          <div class="field">
+            <label>涨跌幅% ≤</label>
+            <input type="number" id="changeMax" step="0.1" placeholder="不限">
           </div>
         </div>
-        <div class="checks">
+        <div class="checks extra-item" data-extra="exclude_st">
           <label class="check"><input type="checkbox" id="excludeSt" checked> 剔除 ST</label>
         </div>
       </section>

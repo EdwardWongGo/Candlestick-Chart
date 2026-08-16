@@ -44,6 +44,7 @@ const state = {
   viewingHistory: null,  // 当前查看的历史记录 {id, ts}，null=非历史视图
   lockedParams: null,    // 锁定的历史筛选条件（基于历史记录继续筛选时锁定，只能追加）
   lockSource: null,      // 锁定来源描述（历史记录时间）
+  showAllDims: false,    // 是否展开全部筛选维度（历史精简视图下默认收起未用维度）
   customCodes: [],       // 导入的自定义股票代码
   importNames: {},       // 导入代码的名称
   dataSource: 'local',   // 数据来源：local(本地) / server(服务器) / upload(上传文件)
@@ -732,7 +733,7 @@ async function loadHistoryItem(id) {
     document.querySelectorAll('.history-item').forEach((el) => {
       el.classList.toggle('selected', el.dataset.id === id);
     });
-    // 基于历史记录继续筛选：回填并锁定该历史记录的筛选条件（只能追加，不能删改）
+    // 基于历史记录继续筛选：仅保留已用条件维度（回填原值可调整），隐藏未用维度
     applyLockedParams(d.params || {}, d.ts || '');
     renderResults();
     updateResultButtons();
@@ -749,117 +750,134 @@ async function loadHistoryItem(id) {
   }
 }
 
-// ===================== 筛选条件锁定（基于历史记录继续筛选） =====================
+// ===================== 筛选条件精简（基于历史记录继续筛选） =====================
+// 原则：仅保留历史记录中「已使用」的条件维度（回填原值，可调整），
+//       未使用过的维度隐藏（可展开），避免展示无关条件造成干扰。
 function applyLockedParams(params, source) {
   state.lockedParams = params;
   state.lockSource = source;
+  state.showAllDims = false;
 
-  // 时间级别：已选中的锁定，未选中的可追加
-  const tfSel = new Set(params.timeframes || []);
-  document.querySelectorAll('#timeframeChips .chip').forEach((chip) => {
-    const on = tfSel.has(chip.dataset.key);
-    chip.classList.toggle('active', on);
-    chip.classList.toggle('locked', on);
-  });
+  // 时间级别：已用则回填可调，未用则隐藏
+  const tfUsed = (params.timeframes || []).length > 0;
+  markDim('panelTimeframe', tfUsed);
+  if (tfUsed) {
+    const tfSel = new Set(params.timeframes || []);
+    document.querySelectorAll('#timeframeChips .chip').forEach((chip) => {
+      chip.classList.toggle('active', tfSel.has(chip.dataset.key));
+      chip.classList.remove('locked');
+    });
+  }
 
-  // 市场：已选中的锁定
-  const mkSel = new Set(params.markets || []);
-  document.querySelectorAll('#marketChips .chip').forEach((chip) => {
-    const on = mkSel.has(chip.dataset.key);
-    chip.classList.toggle('active', on);
-    chip.classList.toggle('locked', on);
-  });
+  // 市场：已用则回填可调，未用则隐藏
+  const mkUsed = (params.markets || []).length > 0;
+  markDim('panelMarket', mkUsed);
+  if (mkUsed) {
+    const mkSel = new Set(params.markets || []);
+    document.querySelectorAll('#marketChips .chip').forEach((chip) => {
+      chip.classList.toggle('active', mkSel.has(chip.dataset.key));
+      chip.classList.remove('locked');
+    });
+  }
 
-  // 形态：历史有限制则选中项锁定、其余可追加；历史无限制（全部）则全锁定
-  const patSel = params.patterns && params.patterns.length ? new Set(params.patterns) : null;
-  const verifySel = new Set(params.verify_patterns || []);
-  document.querySelectorAll('#patternList .pat-main input[type=checkbox]').forEach((cb) => {
-    if (patSel === null) {
-      cb.checked = true;
-      cb.disabled = true;
-    } else if (patSel.has(cb.dataset.key)) {
-      cb.checked = true;
-      cb.disabled = true;
-    } else {
-      cb.checked = false;
+  // 形态：已用则回填可调，未用则隐藏
+  const patUsed = !!(params.patterns && params.patterns.length);
+  markDim('panelPattern', patUsed);
+  if (patUsed) {
+    const patSel = new Set(params.patterns || []);
+    document.querySelectorAll('#patternList .pat-main input[type=checkbox]').forEach((cb) => {
+      cb.checked = patSel.has(cb.dataset.key);
       cb.disabled = false;
-    }
-  });
-  // 验证子选项：历史勾选验证的锁定，其余可追加
-  document.querySelectorAll('#patternList .verify-on').forEach((cb) => {
-    if (verifySel.has(cb.dataset.key)) {
-      cb.checked = true;
-      cb.disabled = true;
-    } else {
-      cb.checked = false;
+    });
+    const verifySel = new Set(params.verify_patterns || []);
+    document.querySelectorAll('#patternList .verify-on').forEach((cb) => {
+      cb.checked = verifySel.has(cb.dataset.key);
       cb.disabled = false;
-    }
-  });
-  // 根据历史形态方向设置单选按钮（看涨/看跌），再应用互斥隐藏
-  const histPats = params.patterns || [];
-  const hasBull = histPats.some((k) => (state.meta.patterns.find((p) => p.key === k) || {}).direction === 'bullish');
-  const hasBear = histPats.some((k) => (state.meta.patterns.find((p) => p.key === k) || {}).direction === 'bearish');
-  const dirRadio = document.querySelector(`input[name="patternDir"][value="${hasBear && !hasBull ? 'bearish' : 'bullish'}"]`);
-  if (dirRadio) dirRadio.checked = true;
-  if (_updateDirectionExclusion) _updateDirectionExclusion();
+    });
+    const pats = params.patterns || [];
+    const hasBull = pats.some((k) => (state.meta.patterns.find((p) => p.key === k) || {}).direction === 'bullish');
+    const hasBear = pats.some((k) => (state.meta.patterns.find((p) => p.key === k) || {}).direction === 'bearish');
+    const dirRadio = document.querySelector(`input[name="patternDir"][value="${hasBear && !hasBull ? 'bearish' : 'bullish'}"]`);
+    if (dirRadio) dirRadio.checked = true;
+    if (_updateDirectionExclusion) _updateDirectionExclusion();
+  }
 
-  // 附加条件（单值）：历史有值则回填并锁定，无值则留空可追加
-  const lockNum = (id, v) => {
-    const el = document.getElementById(id);
-    if (el) {
-      el.value = (v != null && v !== '') ? v : '';
-      el.disabled = (v != null && v !== '');
-    }
+  // 附加条件：逐个字段判断「已用/未用」，已用回填可调，未用隐藏
+  const extraUsed = {
+    above_ma250: !!params.above_ma250,
+    limit_up_count_min: params.limit_up_count_min != null,
+    volume_min: params.volume_min != null,
+    price: (params.price_min != null || params.price_max != null),
+    change: (params.change_min != null || params.change_max != null),
+    exclude_st: params.exclude_st === false,   // 仅「主动取消剔除 ST」算已用
   };
-  lockNum('limitUpCountMin', params.limit_up_count_min);
-  lockNum('volumeMin', params.volume_min);
-  lockNum('priceMin', params.price_min);
-  lockNum('priceMax', params.price_max);
-  lockNum('changeMin', params.change_min);
-  lockNum('changeMax', params.change_max);
-
-  // 布尔条件：锁定为历史值
-  ['aboveMa250', 'syncData'].forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) { el.checked = !!params[id === 'aboveMa250' ? 'above_ma250' : 'sync']; el.disabled = true; }
+  document.querySelectorAll('.extra-item[data-extra]').forEach((item) => {
+    const used = !!extraUsed[item.dataset.extra];
+    item.classList.toggle('hidden', !used);
+    item.dataset.dimHidden = used ? 'false' : 'true';
   });
-  const exEl = document.getElementById('excludeSt');
-  if (exEl) { exEl.checked = params.exclude_st !== false; exEl.disabled = true; }
+  // 回填附加条件值（可调整，不锁定）
+  document.getElementById('aboveMa250').checked = !!params.above_ma250;
+  document.getElementById('aboveMa250').disabled = false;
+  const numBack = (id, v) => { const el = document.getElementById(id); if (el) { el.value = (v != null) ? v : ''; el.disabled = false; } };
+  numBack('limitUpCountMin', params.limit_up_count_min);
+  numBack('volumeMin', params.volume_min);
+  numBack('priceMin', params.price_min);
+  numBack('priceMax', params.price_max);
+  numBack('changeMin', params.change_min);
+  numBack('changeMax', params.change_max);
+  document.getElementById('excludeSt').checked = params.exclude_st !== false;
+  document.getElementById('excludeSt').disabled = false;
+  document.getElementById('syncData').disabled = false;
+
+  // 「附加筛选条件」面板：所有子项都未用时隐藏整个面板
+  const extraPanel = document.getElementById('panelExtra');
+  const anyExtraVisible = [...extraPanel.querySelectorAll('.extra-item')].some((el) => !el.classList.contains('hidden'));
+  extraPanel.classList.toggle('hidden', !anyExtraVisible);
+  extraPanel.dataset.dimHidden = anyExtraVisible ? 'false' : 'true';
 
   showLockBar(source);
-  checkExhausted();
+  renderLockBar();
 }
 
-// 检测「继续筛选」是否已无可追加条件：所有维度都被锁定则提示并禁用入口
-function checkExhausted() {
-  const scanBtn = document.getElementById('scanBtn');
-  if (!state.lockedParams) {
-    scanBtn.disabled = false;
-    return;
-  }
-  const tfAvail = document.querySelectorAll('#timeframeChips .chip:not(.locked)').length > 0;
-  const mkAvail = document.querySelectorAll('#marketChips .chip:not(.locked)').length > 0;
-  const patAvail = document.querySelectorAll('#patternList .pattern-group:not(.hidden-group) .pat-main input:not(:disabled)').length > 0;
-  const numIds = ['limitUpCountMin', 'volumeMin', 'priceMin', 'priceMax', 'changeMin', 'changeMax'];
-  const numAvail = numIds.some((id) => { const el = document.getElementById(id); return el && !el.disabled; });
+// 标记某个维度面板是否「已用」：已用显示，未用隐藏（记 data-dim-hidden 供展开用）
+function markDim(id, used) {
+  const panel = document.getElementById(id);
+  if (!panel) return;
+  panel.classList.toggle('hidden', !used);
+  panel.dataset.dimHidden = used ? 'false' : 'true';
+}
 
-  const exhausted = !tfAvail && !mkAvail && !patAvail && !numAvail;
-  scanBtn.disabled = exhausted;
+// 展开/收起所有未用维度
+function toggleAllDims() {
+  state.showAllDims = !state.showAllDims;
+  document.querySelectorAll('[data-dim-hidden="true"]').forEach((el) => {
+    el.classList.toggle('hidden', !state.showAllDims);
+  });
+  renderLockBar();
+}
+
+// 渲染锁定提示条（含展开/解除入口）
+function renderLockBar() {
   const bar = document.getElementById('lockBar');
-  if (bar) {
-    if (exhausted) {
-      bar.innerHTML = `🔒 已锁定历史条件 <b>${state.lockSource}</b> · ⚠️ 所有条件已占用，无可追加条件，请先「解除锁定」`;
-    } else {
-      bar.innerHTML = `🔒 已锁定历史条件 <b>${state.lockSource}</b>（不可删改，仅可追加）　<a href="#" id="unlockBtn">解除锁定</a>`;
-    }
-    const unlock = document.getElementById('unlockBtn');
-    if (unlock) unlock.addEventListener('click', (e) => { e.preventDefault(); unlockParams(); });
-  }
+  if (!bar) return;
+  const expanded = state.showAllDims;
+  bar.innerHTML = `📌 已按历史条件精简维度 <b>${state.lockSource}</b>（已用条件可调整）
+    <a href="#" id="toggleAllDims">${expanded ? '收起条件' : '＋ 展开全部条件'}</a>
+    <a href="#" id="unlockBtn">解除锁定</a>`;
+  document.getElementById('toggleAllDims').addEventListener('click', (e) => { e.preventDefault(); toggleAllDims(); });
+  document.getElementById('unlockBtn').addEventListener('click', (e) => { e.preventDefault(); unlockParams(); });
 }
 
 function unlockParams() {
   state.lockedParams = null;
   state.lockSource = null;
+  state.showAllDims = false;
+  // 恢复所有维度显示（移除 hidden 与 data-dim-hidden）
+  document.querySelectorAll('[data-dim-hidden]').forEach((el) => {
+    el.classList.remove('hidden');
+    delete el.dataset.dimHidden;
+  });
   document.querySelectorAll('.chip.locked').forEach((c) => c.classList.remove('locked'));
   document.querySelectorAll('#patternList input[type=checkbox]').forEach((cb) => { cb.disabled = false; });
   ['limitUpCountMin', 'volumeMin', 'priceMin', 'priceMax', 'changeMin', 'changeMax',
@@ -877,7 +895,7 @@ function unlockParams() {
 }
 
 function showLockBar(source) {
-  // 仅负责创建锁定提示条元素，具体内容与解锁绑定由 checkExhausted 统一处理
+  // 仅负责创建锁定提示条元素，具体内容与绑定由 renderLockBar 统一处理
   let bar = document.getElementById('lockBar');
   if (!bar) {
     bar = document.createElement('div');
