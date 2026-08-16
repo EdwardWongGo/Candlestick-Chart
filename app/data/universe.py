@@ -83,6 +83,23 @@ def parse_codes(text: str):
     return valid, invalid
 
 
+def to_ebk_code(code: str) -> Optional[str]:
+    """把 6 位 A 股代码转成通达信 EBK 格式（市场标识 + 6 位代码）。
+
+    市场标识：0=深证(含创业板) 1=上证(含科创板) 2=北证。
+    无法归类（other）时返回 None。
+    """
+    c = str(code).zfill(6)
+    m = config.classify_market(c)
+    if m in ("sz", "cyb"):
+        return "0" + c
+    if m in ("sh", "kcb"):
+        return "1" + c
+    if m == "bj":
+        return "2" + c
+    return None
+
+
 class Universe:
     """A 股股票池。"""
 

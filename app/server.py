@@ -396,6 +396,38 @@ def export_csv():
     )
 
 
+@app.route("/api/export/ebk", methods=["POST"])
+def export_ebk():
+    """导出 EBK 格式（通达信自选股板块文件，供通达信软件导入）。"""
+    body = request.get_json(silent=True) or {}
+    results = body.get("results") or []
+
+    # 去重保序（一条结果对应一只股票，多形态/多级别时只保留一个代码）
+    codes: List[str] = []
+    seen = set()
+    for r in results:
+        code = r.get("code")
+        if code and code not in seen:
+            seen.add(code)
+            codes.append(code)
+
+    if not codes:
+        return jsonify({"error": "无结果可导出"}), 400
+
+    from .data.universe import to_ebk_code
+    lines = [to_ebk_code(c) for c in codes]
+    lines = [ln for ln in lines if ln]
+    content = "\r\n".join(lines) + "\r\n"
+    fname = f"A股筛选_{datetime.now().strftime('%Y%m%d_%H%M%S')}.EBK"
+    mem = io.BytesIO()
+    mem.write(content.encode("utf-8"))   # 纯数字内容，UTF-8/ASCII 兼容
+    mem.seek(0)
+    return send_file(
+        mem, mimetype="application/octet-stream", as_attachment=True,
+        download_name=fname,
+    )
+
+
 # ---------------------------------------------------------------------------
 # 静态页面
 # ---------------------------------------------------------------------------

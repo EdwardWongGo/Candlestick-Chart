@@ -71,6 +71,7 @@ class Screener:
             timeframes = ["daily"]
 
         patterns = params.get("patterns") or None
+        verify_patterns = params.get("verify_patterns") or None   # 需要验证的形态（追加1天验证日）
         directions = params.get("directions") or None
         exclude_st = params.get("exclude_st", True)
         sync = params.get("sync", False)                     # 是否筛选前同步服务器数据
@@ -195,7 +196,8 @@ class Screener:
                     continue
                 try:
                     matches = detect_patterns(bars, keys=patterns,
-                                              lookback=config.SCAN_LOOKBACK)
+                                              lookback=config.SCAN_LOOKBACK,
+                                              verify_keys=verify_patterns)
                 except Exception:
                     failed += 1
                     done += 1

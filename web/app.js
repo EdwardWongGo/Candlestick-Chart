@@ -13,6 +13,7 @@ const API = {
   import: '/api/import',
   selftest: '/api/selftest',
   export: '/api/export',
+  exportEbk: '/api/export/ebk',
   board: (kind, date) => `/api/board/${kind}${date ? '?date=' + date : ''}`,
   ladder: (date) => `/api/ladder${date ? '?date=' + date : ''}`,
   ladderDown: () => '/api/ladder-down',
@@ -84,6 +85,7 @@ function bindEvents() {
   document.getElementById('reloadBtn').addEventListener('click', reloadScan);
   document.getElementById('clearResultBtn').addEventListener('click', clearResult);
   document.getElementById('exportBtn').addEventListener('click', exportCSV);
+  document.getElementById('exportEbkBtn').addEventListener('click', exportEBK);
   document.getElementById('reportBtn').addEventListener('click', generateReport);
   document.getElementById('selftestBtn').addEventListener('click', runSelftest);
   document.getElementById('patternSelectAll').addEventListener('click', () => setAllPatterns(true));
@@ -188,12 +190,17 @@ function renderPatterns() {
     title.innerHTML = `<span>${g.zh}</span><span class="link group-toggle" data-group="${g.key}">全选/清空</span>`;
     gwrap.appendChild(title);
     patterns.forEach((p) => {
-      const item = document.createElement('label');
+      const item = document.createElement('div');
       item.className = 'pattern-item';
       item.innerHTML = `
-        <input type="checkbox" data-key="${p.key}" checked>
-        <span class="pname">${p.name_zh} <span class="pdir" style="color:${C_DIM}">${p.name_en}</span></span>
-        <span class="pdir dir-${p.direction}">${dirZh(p.direction)}</span>`;
+        <label class="pat-main">
+          <input type="checkbox" data-key="${p.key}" checked>
+          <span class="pname">${p.name_zh} <span class="pdir" style="color:${C_DIM}">${p.name_en}</span></span>
+          <span class="pdir dir-${p.direction}">${dirZh(p.direction)}</span>
+        </label>
+        <label class="pat-verify" title="勾选后追加 1 天验证日，仅保留通过验证的形态">
+          <input type="checkbox" class="verify-on" data-key="${p.key}"> 验证
+        </label>`;
       gwrap.appendChild(item);
     });
     box.appendChild(gwrap);
@@ -207,13 +214,13 @@ function renderPatterns() {
 function dirZh(d) { return d === 'bullish' ? '看涨' : (d === 'bearish' ? '看跌' : '中性'); }
 
 function setAllPatterns(checked) {
-  document.querySelectorAll('#patternList input[type=checkbox]').forEach((cb) => { cb.checked = checked; });
+  document.querySelectorAll('#patternList .pat-main input[type=checkbox]').forEach((cb) => { cb.checked = checked; });
 }
 
 function toggleGroup(direction) {
   const gw = document.querySelector(`.pattern-group[data-dir="${direction}"]`);
   if (!gw) return;
-  const cbs = [...gw.querySelectorAll('input[type=checkbox]')];
+  const cbs = [...gw.querySelectorAll('.pat-main input[type=checkbox]')];
   if (!cbs.length) return;
   const allChecked = cbs.every((cb) => cb.checked);
   cbs.forEach((cb) => { cb.checked = !allChecked; });   // 全选→清空，否则→全选
@@ -235,6 +242,10 @@ async function onImportFile(e) {
     state.customCodes = data.valid_codes || [];
     state.importNames = data.names || {};
     showImportResult(data, file.name);
+    // 导入后自动用自定义股票池执行筛选：右侧栏展示结果 + 后端自动生成历史记录
+    if (state.customCodes.length) {
+      await startScan();
+    }
   } catch (err) {
     console.error(err);
     alert('导入失败');
@@ -255,7 +266,7 @@ function showImportResult(data, fname) {
       失败 <span class="bad">${data.invalid_count}</span> 个</div>
     ${dist ? `<div class="detail">分布：${dist}</div>` : ''}
     ${bad ? `<div class="detail">无效项：${bad}${data.invalid_count > 50 ? '…' : ''}</div>` : ''}
-    <div class="detail" style="color:var(--accent)">已作为「自定义股票池」参与后续筛选</div>`;
+    <div class="detail" style="color:var(--accent)">已作为「自定义股票池」自动开始筛选，结果见右侧栏</div>`;
 }
 
 function clearImport() {
@@ -268,7 +279,8 @@ function clearImport() {
 function collectParams() {
   const timeframes = [...document.querySelectorAll('#timeframeChips .chip.active')].map((c) => c.dataset.key);
   const markets = [...document.querySelectorAll('#marketChips .chip.active')].map((c) => c.dataset.key);
-  const patterns = [...document.querySelectorAll('#patternList input:checked')].map((cb) => cb.dataset.key);
+  const patterns = [...document.querySelectorAll('#patternList .pat-main input:checked')].map((cb) => cb.dataset.key);
+  const verifyPatterns = [...document.querySelectorAll('#patternList .verify-on:checked')].map((cb) => cb.dataset.key);
 
   const num = (id) => { const v = document.getElementById(id).value; return v === '' ? null : parseFloat(v); };
 
@@ -276,6 +288,7 @@ function collectParams() {
     timeframes: timeframes.length ? timeframes : ['daily'],
     markets: markets.length ? markets : null,       // 空 = 不限
     patterns: patterns.length ? patterns : null,
+    verify_patterns: verifyPatterns.length ? verifyPatterns : null,   // 需要验证的形态
     above_ma250: document.getElementById('aboveMa250').checked,
     sync: document.getElementById('syncData').checked,
     limit_up_count_min: num('limitUpCountMin'),
@@ -442,6 +455,7 @@ function clearResult() {
   state.viewingHistory = null;
   state.page = 1;
   if (state.lockedParams) unlockParams();  // 返回空状态即解除锁定
+  document.querySelectorAll('.history-item.selected').forEach((el) => el.classList.remove('selected'));
   renderResults();
   updateResultButtons();
 }
@@ -452,6 +466,7 @@ function updateResultButtons() {
   document.getElementById('clearResultBtn').disabled = !has;
   document.getElementById('reloadBtn').disabled = !state.lastParams;
   document.getElementById('exportBtn').disabled = !has;
+  document.getElementById('exportEbkBtn').disabled = !has;
   document.getElementById('reportBtn').disabled = !has;
 }
 
@@ -505,7 +520,8 @@ async function loadHistory() {
       const tf = (h.timeframes || []).map(lvTf).join('/') || '—';
       const mk = (h.markets || []).map(marketZh).join('/') || '全部市场';
       const cost = h.elapsed_ms != null ? `<span class="hi-cost">⏱ ${formatMs(h.elapsed_ms)}</span>` : '';
-      return `<div class="history-item" data-id="${h.id}" title="点击加载该结果">
+      const selected = (state.viewingHistory && state.viewingHistory.id === h.id) ? ' selected' : '';
+      return `<div class="history-item${selected}" data-id="${h.id}" title="点击加载该结果">
         <input type="checkbox" class="hi-check" data-id="${h.id}">
         <span class="hi-time">${h.ts}</span>
         <span class="hi-meta">${tf} · ${mk} · 命中 <b>${h.matched_rows}</b> 条</span>
@@ -564,6 +580,10 @@ async function loadHistoryItem(id) {
     state.lastParams = d.params || null;
     state.viewingHistory = { id, ts: d.ts };
     state.page = 1;
+    // 高亮选中的历史记录项（标识当前操作对象）
+    document.querySelectorAll('.history-item').forEach((el) => {
+      el.classList.toggle('selected', el.dataset.id === id);
+    });
     // 基于历史记录继续筛选：回填并锁定该历史记录的筛选条件（只能追加，不能删改）
     applyLockedParams(d.params || {}, d.ts || '');
     renderResults();
@@ -604,11 +624,22 @@ function applyLockedParams(params, source) {
 
   // 形态：历史有限制则选中项锁定、其余可追加；历史无限制（全部）则全锁定
   const patSel = params.patterns && params.patterns.length ? new Set(params.patterns) : null;
-  document.querySelectorAll('#patternList input[type=checkbox]').forEach((cb) => {
+  const verifySel = new Set(params.verify_patterns || []);
+  document.querySelectorAll('#patternList .pat-main input[type=checkbox]').forEach((cb) => {
     if (patSel === null) {
       cb.checked = true;
       cb.disabled = true;
     } else if (patSel.has(cb.dataset.key)) {
+      cb.checked = true;
+      cb.disabled = true;
+    } else {
+      cb.checked = false;
+      cb.disabled = false;
+    }
+  });
+  // 验证子选项：历史勾选验证的锁定，其余可追加
+  document.querySelectorAll('#patternList .verify-on').forEach((cb) => {
+    if (verifySel.has(cb.dataset.key)) {
       cb.checked = true;
       cb.disabled = true;
     } else {
@@ -1116,13 +1147,13 @@ function generateReport() {
   if (!state.results.length) return;
   const st = state.scanStats || {};
   const results = [...state.results].sort((a, b) => b.strength - a.strength);
-  const top = results.slice(0, 30);
+  const all = results;   // 展示全部筛选结果（不再截断前 30 条）
   const resonanceStocks = [...new Set(state.results.filter((r) => r.resonance).map((r) => r.code + ' ' + r.name))];
   const upCount = state.results.filter((r) => r.direction === 'bullish').length;
   const downCount = state.results.filter((r) => r.direction === 'bearish').length;
   const now = new Date().toLocaleString('zh-CN');
 
-  const rows = top.map((r) => `
+  const rows = all.map((r) => `
     <tr>
       <td>${r.code}</td><td>${r.name}</td><td>${r.market_zh}</td><td>${r.timeframe_zh}</td>
       <td>${r.pattern_zh}</td><td style="color:${r.direction === 'bullish' ? '#f23645' : '#26a69a'}">${r.direction_zh}</td>
@@ -1157,7 +1188,7 @@ function generateReport() {
     <div class="card"><div class="num" style="color:#f23645">${upCount}</div><div class="lbl">看涨信号</div></div>
     <div class="card"><div class="num" style="color:#26a69a">${downCount}</div><div class="lbl">看跌信号</div></div>
   </div>
-  <h2>Top ${top.length} 信号（按强度排序）</h2>
+  <h2>全部信号（${all.length} 条，按强度排序）</h2>
   <table><thead><tr>
     <th>代码</th><th>名称</th><th>板块</th><th>级别</th><th>形态</th><th>方向</th><th>日期</th><th>强度</th><th>放量</th><th>涨跌</th><th>共振</th>
   </tr></thead><tbody>${rows}</tbody></table>
@@ -1311,5 +1342,36 @@ async function exportCSV() {
   } catch (e) {
     console.error(e);
     alert('导出失败');
+  }
+}
+
+// 导出 EBK（通达信自选股板块，去重保序）
+async function exportEBK() {
+  if (!state.results.length) return;
+  try {
+    const r = await fetch(API.exportEbk, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ results: state.results }),
+    });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || '导出失败'); return; }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const disp = r.headers.get('Content-Disposition') || '';
+    let fname = 'scan_results.EBK';
+    const m1 = disp.match(/filename\*=UTF-8''([^;]+)/i);
+    if (m1) { fname = decodeURIComponent(m1[1]); }
+    else {
+      const m2 = disp.match(/filename="?([^";]+)/i);
+      if (m2) fname = m2[1];
+    }
+    a.href = url;
+    a.download = fname;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    console.error(e);
+    alert('导出 EBK 失败');
   }
 }

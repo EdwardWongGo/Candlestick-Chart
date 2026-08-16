@@ -396,15 +396,41 @@ def all_patterns() -> List[PatternDef]:
     return PATTERNS
 
 
+def _verify(candles: List[Candle], i: int, direction: str) -> bool:
+    """验证日确认：形态在 i 处完成，i+1 为验证日。
+
+    看涨形态 → 验证日收盘高于形态完成日收盘（确认上涨）；
+    看跌形态 → 验证日收盘低于形态完成日收盘（确认下跌）。
+    """
+    if i + 1 >= len(candles):
+        return False   # 形态已是最后一根，无验证日可用
+    confirm = candles[i + 1]
+    prev = candles[i]
+    if direction == "bullish":
+        return confirm.close > prev.close
+    if direction == "bearish":
+        return confirm.close < prev.close
+    return True   # 中性方向不做验证
+
+
 def detect_patterns(candles: List[Candle], keys: Optional[List[str]] = None,
-                    lookback: int = 5) -> List[PatternMatch]:
-    """对单只股票某级别的 K 线做形态扫描。
+                    lookback: int = 5,
+                    verify_keys: Optional[List[str]] = None) -> List[PatternMatch]:
+    """对「最近连续交易日窗口」做形态判断。
+
+    与全周期扫描不同，形态必须恰好完成于最近窗口内：
+    - 不验证的形态：以最后一根 K 线为完成日（i = n-1），用最近 candles 根判断
+      （如启明星 = 最近 3 个连续交易日）。
+    - 需要验证的形态：以倒数第二根为完成日（i = n-2），最后一根作为「验证日」，
+      即形态在原所需根数基础上追加 1 天验证日（如启明星 3 天 → 4 天），
+      仅当验证日确认形态方向时才命中。
 
     candles: 升序 K 线列表
     keys:    限定扫描的形态（None = 全部）
-    lookback: 往回扫描最近 N 根 K 线（形态以最后一根下标计）
+    verify_keys: 需要验证的形态 key 列表（勾选「验证」的形态）
+    lookback: 兼容旧签名保留，不再用于往回扫描。
 
-    返回命中的 PatternMatch 列表（每形态最多取最近一次命中）。
+    返回命中的 PatternMatch 列表（每个形态最多 1 次命中）。
     """
     if not candles:
         return []
@@ -412,47 +438,51 @@ def detect_patterns(candles: List[Candle], keys: Optional[List[str]] = None,
         defs = PATTERNS
     else:
         defs = [p for p in PATTERNS if p.key in keys]
+    verify_set = set(verify_keys) if verify_keys else set()
 
-    matches: List[PatternMatch] = []
     n = len(candles)
-    # 从最新一根往回扫
-    for start in range(n - 1, max(-1, n - 1 - lookback), -1):
-        i = start
-        for pd in defs:
-            # 需要前 pd.candles-1 根
-            if i < pd.candles - 1:
-                continue
-            strength = pd.matcher(candles, i)
-            if strength is None:
-                continue
-            direction = pd.direction
-            # 十字星方向依趋势而定
-            if pd.key == "doji":
-                trend = base.prior_trend(candles, i)
-                if trend == "down":
-                    direction = "bullish"
-                elif trend == "up":
-                    direction = "bearish"
-                else:
-                    direction = "neutral"
-            k = candles[i]
-            matches.append(PatternMatch(
-                key=pd.key,
-                name_zh=pd.name_zh,
-                name_en=pd.name_en,
-                direction=direction,
-                date=k.dt,
-                index=i,
-                strength=round(strength, 1),
-                volume_ratio=round(base.volume_ratio(candles, i), 2),
-                body_ratio=round(base.safe_div(k.body, k.total_range), 3),
-                desc=pd.desc,
-                candle_indexes=list(range(i - pd.candles + 1, i + 1)),
-            ))
-    # 去重：每个形态仅保留最新（index 最大）一次命中
-    best: dict = {}
-    for m in matches:
-        if m.key not in best or m.index > best[m.key].index:
-            best[m.key] = m
-    result = sorted(best.values(), key=lambda m: m.index, reverse=True)
-    return result
+    matches: List[PatternMatch] = []
+    for pd in defs:
+        need_verify = pd.key in verify_set
+        # 验证形态：完成日在倒数第二根，最后一根为验证日
+        i = n - 2 if need_verify else n - 1
+        if i < pd.candles - 1:
+            continue
+        strength = pd.matcher(candles, i)
+        if strength is None:
+            continue
+
+        direction = pd.direction
+        # 十字星方向依趋势而定
+        if pd.key == "doji":
+            trend = base.prior_trend(candles, i)
+            if trend == "down":
+                direction = "bullish"
+            elif trend == "up":
+                direction = "bearish"
+            else:
+                direction = "neutral"
+
+        # 验证日确认（勾选验证的形态）
+        if need_verify and not _verify(candles, i, direction):
+            continue
+
+        k = candles[i]
+        idxs = list(range(i - pd.candles + 1, i + 1))
+        if need_verify:
+            idxs.append(n - 1)   # 追加验证日
+        matches.append(PatternMatch(
+            key=pd.key,
+            name_zh=pd.name_zh,
+            name_en=pd.name_en,
+            direction=direction,
+            date=k.dt,
+            index=i,
+            strength=round(strength, 1),
+            volume_ratio=round(base.volume_ratio(candles, i), 2),
+            body_ratio=round(base.safe_div(k.body, k.total_range), 3),
+            desc=pd.desc,
+            candle_indexes=idxs,
+        ))
+
+    return sorted(matches, key=lambda m: m.index, reverse=True)

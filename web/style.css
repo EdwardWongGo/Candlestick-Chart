@@ -233,12 +233,23 @@ body {
 .pattern-group-title .group-toggle { color: var(--accent); }
 .pattern-item {
   display: flex; align-items: center; gap: 8px; padding: 6px 8px;
-  border-radius: 6px; cursor: pointer; transition: background .12s;
+  border-radius: 6px; transition: background .12s;
 }
 .pattern-item:hover { background: var(--bg-hover); }
+.pattern-item .pat-main {
+  display: flex; align-items: center; gap: 8px; flex: 1; cursor: pointer;
+  min-width: 0;
+}
 .pattern-item input { accent-color: var(--accent); }
 .pattern-item .pname { flex: 1; font-size: 12px; }
 .pattern-item .pdir { font-size: 11px; }
+.pattern-item .pat-verify {
+  display: flex; align-items: center; gap: 3px; flex-shrink: 0;
+  font-size: 11px; color: var(--text-dim); cursor: pointer;
+  padding: 1px 6px; border-radius: 4px; border: 1px solid transparent;
+}
+.pattern-item .pat-verify:hover { color: var(--accent); border-color: var(--accent); }
+.pattern-item .pat-verify:has(input:checked) { color: var(--accent); }
 .dir-up { color: var(--up); }
 .dir-down { color: var(--down); }
 .dir-neutral { color: var(--text-dim); }
@@ -347,6 +358,7 @@ body {
   font-size: 11px; color: var(--text-dim); transition: all .12s; flex-shrink: 0;
 }
 .history-item:hover { border-color: var(--accent); color: var(--text); }
+.history-item.selected { border-color: var(--accent); background: var(--accent-bg); color: var(--text); box-shadow: 0 0 0 1px var(--accent); }
 .history-item .hi-time { color: var(--text); }
 .history-item .hi-meta b { color: var(--up); }
 .history-item .hi-cost { color: var(--text-faint); font-size: 10px; }
