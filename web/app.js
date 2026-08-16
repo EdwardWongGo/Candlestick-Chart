@@ -38,6 +38,7 @@ const state = {
   meta: null,
   results: [],
   scanStats: null,
+  viewingHistory: null,  // 当前查看的历史记录 {id, ts}，null=非历史视图
   customCodes: [],       // 导入的自定义股票代码
   importNames: {},       // 导入代码的名称
   jobId: null,
@@ -77,6 +78,7 @@ function bindEvents() {
   document.getElementById('scanBtn').addEventListener('click', () => startScan());
   document.getElementById('stopBtn').addEventListener('click', stopScan);
   document.getElementById('reloadBtn').addEventListener('click', reloadScan);
+  document.getElementById('clearResultBtn').addEventListener('click', clearResult);
   document.getElementById('exportBtn').addEventListener('click', exportCSV);
   document.getElementById('reportBtn').addEventListener('click', generateReport);
   document.getElementById('selftestBtn').addEventListener('click', runSelftest);
@@ -373,10 +375,8 @@ function finishScan(result, error, errlog) {
     return;
   }
   renderResults();
-  const has = state.results.length > 0;
-  document.getElementById('reloadBtn').disabled = !has;
-  document.getElementById('exportBtn').disabled = !has;
-  document.getElementById('reportBtn').disabled = !has;
+  state.viewingHistory = null;
+  updateResultButtons();
   // 筛选完成后刷新同步时间与历史结果栏
   initSyncStatus();
   loadHistory();
@@ -394,6 +394,25 @@ function reloadScan() {
   startScan(state.lastParams);
 }
 
+// 清空当前结果，回到「暂无结果」空状态（从历史视图返回）
+function clearResult() {
+  state.results = [];
+  state.scanStats = null;
+  state.viewingHistory = null;
+  state.page = 1;
+  renderResults();
+  updateResultButtons();
+}
+
+// 统一更新结果区按钮可用状态
+function updateResultButtons() {
+  const has = state.results.length > 0;
+  document.getElementById('clearResultBtn').disabled = !has;
+  document.getElementById('reloadBtn').disabled = !state.lastParams;
+  document.getElementById('exportBtn').disabled = !has;
+  document.getElementById('reportBtn').disabled = !has;
+}
+
 // 恢复最近一次成功结果（页面加载 / 切回时快速显示，无需重新计算）
 async function restoreCachedResult() {
   try {
@@ -403,11 +422,9 @@ async function restoreCachedResult() {
       state.results = d.result.results || [];
       state.scanStats = d.result.stats || null;
       state.lastParams = d.params || null;
+      state.viewingHistory = null;
       renderResults();
-      const has = state.results.length > 0;
-      document.getElementById('reloadBtn').disabled = !has;
-      document.getElementById('exportBtn').disabled = !has;
-      document.getElementById('reportBtn').disabled = !has;
+      updateResultButtons();
     }
   } catch (e) { /* 忽略：无缓存或服务未就绪 */ }
 }
@@ -460,11 +477,14 @@ async function loadHistory() {
         loadHistoryItem(el.dataset.id);
       });
     });
-    // 单条删除
+    // 单条删除（先确认再删）
     box.querySelectorAll('.hi-del').forEach((el) => {
       el.addEventListener('click', async (e) => {
         e.stopPropagation();
-        await fetch(API.historyItem(el.dataset.del), { method: 'DELETE' });
+        if (!confirm('确定要删除该记录吗？')) return;
+        const r = await fetch(API.historyItem(el.dataset.del), { method: 'DELETE' });
+        const d = await r.json().catch(() => ({}));
+        if (d.deleted === false) { alert('删除失败，请重试'); }
         loadHistory();
       });
     });
@@ -472,16 +492,18 @@ async function loadHistory() {
     checkAll.onchange = () => {
       box.querySelectorAll('.hi-check').forEach((cb) => { cb.checked = checkAll.checked; });
     };
-    // 批量删除
+    // 批量删除（先确认再删）
     document.getElementById('historyBatchDel').onclick = async () => {
       const ids = [...box.querySelectorAll('.hi-check:checked')].map((cb) => cb.dataset.id);
       if (!ids.length) { alert('请先勾选要删除的记录'); return; }
-      if (!confirm(`确定删除选中的 ${ids.length} 条历史结果吗？`)) return;
-      await fetch(API.history + '/batch', {
+      if (!confirm(`确定要删除选中的 ${ids.length} 条记录吗？`)) return;
+      const r = await fetch(API.history + '/batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids }),
       });
+      const d = await r.json().catch(() => ({}));
+      if (d.deleted !== ids.length) { alert(`删除完成：${d.deleted}/${ids.length} 条`); }
       checkAll.checked = false;
       loadHistory();
     };
@@ -496,12 +518,16 @@ async function loadHistoryItem(id) {
     state.results = d.results || [];
     state.scanStats = d.stats || null;
     state.lastParams = d.params || null;
+    state.viewingHistory = { id, ts: d.ts };
     state.page = 1;
     renderResults();
-    const has = state.results.length > 0;
-    document.getElementById('reloadBtn').disabled = !has;
-    document.getElementById('exportBtn').disabled = !has;
-    document.getElementById('reportBtn').disabled = !has;
+    updateResultButtons();
+    // 统计栏提示当前查看的是历史结果
+    const statsEl = document.getElementById('stats');
+    if (statsEl) {
+      statsEl.innerHTML = `📜 已加载历史结果 <b>${d.ts || ''}</b> · 命中 <b>${state.results.length}</b> 条　<a href="#" id="backToEmpty" style="color:var(--accent)">返回</a>`;
+      document.getElementById('backToEmpty').addEventListener('click', (e) => { e.preventDefault(); clearResult(); });
+    }
     // 切回形态筛选页（若当前在其它 Tab）
     switchTab('screener');
   } catch (e) {
@@ -537,11 +563,19 @@ function renderResults() {
   const pageList = list.slice(start, start + state.pageSize);
 
   const tbody = document.getElementById('resultBody');
+  const emptyState = document.getElementById('emptyState');
+  const table = document.getElementById('resultTable');
   if (!total) {
-    tbody.innerHTML = '<tr class="empty"><td colspan="13">无符合条件的信号，请调整筛选条件</td></tr>';
+    // 空结果状态：显示「暂无结果」提示界面，隐藏表格
+    emptyState.classList.remove('hidden');
+    table.classList.add('hidden');
+    tbody.innerHTML = '';
     updatePagination(0, 1, 1);
     return;
   }
+
+  emptyState.classList.add('hidden');
+  table.classList.remove('hidden');
 
   tbody.innerHTML = pageList.map((r) => {
     const dirCls = r.direction === 'bullish' ? 'tag-up' : (r.direction === 'bearish' ? 'tag-down' : 'tag-tf');

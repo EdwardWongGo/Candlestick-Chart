@@ -96,18 +96,21 @@ class Screener:
         sync_status = None
         if sync:
             from .sync import sync_incremental
-            sync_status = sync_incremental(codes, timeframes)
+            sync_status = sync_incremental(codes, timeframes, progress_cb=progress_cb)
 
         # 1.1b 近一年涨停次数预筛（基于日线推导，可与其他条件自由组合）
         limit_1y_map: Dict[str, int] = {}
         if limit_up_count_min is not None:
             kept = []
-            for c in codes:
+            total = len(codes)
+            for idx, c in enumerate(codes):
                 bars = self._get_bars(c, "daily")
                 cnt = count_limit_up(bars, c, names.get(c, ""), days=245) if bars else 0
                 limit_1y_map[c] = cnt
                 if cnt >= limit_up_count_min:
                     kept.append(c)
+                if progress_cb:
+                    progress_cb(idx + 1, total, f"预筛涨停次数 {c}")
             codes = kept
 
         # 1.2 批量补齐名称（demo 池 / 导入代码无名称时走腾讯批量，避免逐只请求）
@@ -125,12 +128,15 @@ class Screener:
         ma250_above_count = 0
         if check_ma250:
             ma250_pass: Dict[str, bool] = {}
-            for code in codes:
+            total = len(codes)
+            for idx, code in enumerate(codes):
                 bars = self._get_bars(code, "daily")
                 ok = above_ma250(bars)
                 ma250_pass[code] = bool(ok)
                 if ok:
                     ma250_above_count += 1
+                if progress_cb:
+                    progress_cb(idx + 1, total, f"预筛年线 {code}")
             codes = [c for c in codes if ma250_pass.get(c, False)]
 
         # 市场分布统计（最终进入扫描的样本）

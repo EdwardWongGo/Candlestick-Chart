@@ -132,6 +132,7 @@
           <span class="resonance-toggle">
             <input type="checkbox" id="resonanceOnly"> 仅看共振
           </span>
+          <button class="ghost-btn" id="clearResultBtn" disabled>✕ 清空结果</button>
           <button class="ghost-btn" id="reloadBtn" disabled>🔄 重新加载</button>
           <button class="ghost-btn" id="exportBtn" disabled>⬇ 导出 CSV</button>
           <button class="ghost-btn" id="reportBtn" disabled>📄 生成报告</button>
@@ -148,6 +149,11 @@
       </div>
 
       <div class="table-wrap">
+        <div class="empty-state" id="emptyState">
+          <div class="empty-icon">📭</div>
+          <div class="empty-title">暂无结果</div>
+          <div class="empty-sub">选择筛选条件后点击「开始筛选」，或从上方历史记录加载结果</div>
+        </div>
         <table class="result-table" id="resultTable">
           <thead>
             <tr>
