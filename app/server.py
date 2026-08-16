@@ -154,16 +154,14 @@ def ladder():
 
 @app.route("/api/ladder-down")
 def ladder_down():
-    full = request.args.get("full", "0") == "1"
-    return jsonify(get_dt_ladder(full_market=full))
+    return jsonify(get_dt_ladder())
 
 
 @app.route("/api/unsealed/<direction>")
 def unsealed(direction):
-    full = request.args.get("full", "0") == "1"
     if direction not in ("up", "down"):
         return jsonify({"error": "未知方向"}), 400
-    return jsonify(get_unsealed(direction, full_market=full))
+    return jsonify(get_unsealed(direction))
 
 
 @app.route("/api/news/weekend")
@@ -253,7 +251,7 @@ def sync_status():
 
 @app.route("/api/sync", methods=["POST"])
 def sync_now():
-    """手动触发一次数据同步（同步精选池，快速）。"""
+    """手动触发一次数据同步（默认同步本地全市场股票池）。"""
     body = request.get_json(silent=True) or {}
     codes = body.get("codes") or None
     timeframes = body.get("timeframes") or ["daily"]
@@ -263,7 +261,7 @@ def sync_now():
         codes = u.codes
     else:
         from .data.universe import load_universe
-        codes = load_universe(False).codes
+        codes = load_universe().codes
     result = sync_incremental(codes, timeframes)
     return jsonify(result)
 
@@ -274,6 +272,18 @@ def sync_now():
 @app.route("/api/history")
 def history_list():
     return jsonify({"history": list_history()})
+
+
+@app.route("/api/history/batch", methods=["POST"])
+def history_batch_delete():
+    """批量删除历史筛选结果。body: {ids: [hid, ...]}。"""
+    body = request.get_json(silent=True) or {}
+    ids = body.get("ids") or []
+    deleted = 0
+    for hid in ids:
+        if delete_history(hid):
+            deleted += 1
+    return jsonify({"deleted": deleted, "requested": len(ids)})
 
 
 @app.route("/api/history/<hid>", methods=["GET", "DELETE"])

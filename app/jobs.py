@@ -82,18 +82,20 @@ class JobManager:
             job["status"] = "done"
             job["message"] = f"扫描完成，命中 {result['total']} 条"
             job["result"] = result
-            # 结果缓存：保存最近一次成功结果 + 参数 + 时间戳
-            self._last_result = {
-                "params": params,
-                "result": result,
-                "ts": time.time(),
-            }
-            # 历史筛选结果：每次筛选完成后缓存到本地文件
-            try:
-                from .history import save_history
-                save_history(params, result)
-            except Exception:
-                pass
+            # 零命中处理：命中 0 条时不写结果缓存、不写历史记录，也不更新 last_result
+            if result["total"] > 0:
+                # 结果缓存：保存最近一次成功结果 + 参数 + 时间戳
+                self._last_result = {
+                    "params": params,
+                    "result": result,
+                    "ts": time.time(),
+                }
+                # 历史筛选结果：每次有效筛选（命中>0）完成后缓存到本地文件
+                try:
+                    from .history import save_history
+                    save_history(params, result)
+                except Exception:
+                    pass
         except ScanCancelled:
             job["status"] = "cancelled"
             job["message"] = "已停止筛选"

@@ -73,7 +73,6 @@ def run_cli(args):
         "change_max": args.change_max,
         "position": args.position,
         "exclude_st": not args.include_st,
-        "full_market": args.full,
         "sort_by": args.sort_by,
     }
 
@@ -116,7 +115,6 @@ def main():
     parser.add_argument("--position", type=str, default=None,
                         choices=["near_support", "near_resistance"])
     parser.add_argument("--include-st", action="store_true", help="包含 ST")
-    parser.add_argument("--full", action="store_true", help="全市场扫描")
     parser.add_argument("--sort-by", type=str, default="strength", choices=["strength", "date"])
     args = parser.parse_args()
 

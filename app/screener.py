@@ -54,11 +54,10 @@ class Screener:
           volume_min:  放量倍数下限（None=不限）
           price_min / price_max: 价格区间
           change_min / change_max: 涨跌幅区间（%）
-          full_market: 是否全市场
           exclude_st:  剔除 ST
           markets:     ['sh','sz','bj','kcb','cyb'] 或 None=不限（可多选）
           above_ma250: 是否要求最新价在年线（MA250）之上
-          custom_codes: 导入的自定义股票代码列表（优先于全市场/精选池）
+          custom_codes: 导入的自定义股票代码列表（优先于本地股票池）
           sync:        是否在筛选前先同步服务器最新数据到本地（勾选「同步服务器数据」）
           limit_up_count_min: 近一年涨停次数下限（None=不限）
 
@@ -74,18 +73,17 @@ class Screener:
 
         patterns = params.get("patterns") or None
         directions = params.get("directions") or None
-        full_market = params.get("full_market", False)
         exclude_st = params.get("exclude_st", True)
         sync = params.get("sync", False)                     # 是否筛选前同步服务器数据
         limit_up_count_min = params.get("limit_up_count_min")  # 近一年涨停次数下限
 
-        # 1. 股票池（导入的自定义代码优先，否则按全市场/精选池）
+        # 1. 股票池（导入的自定义代码优先，否则统一用本地全市场列表）
         #    注意：用 is not None 区分「未传」(None) 与「传入空列表」(应返回空结果)
         custom_codes = params.get("custom_codes")
         if custom_codes is not None:
             universe = Universe().from_list(custom_codes)
         else:
-            universe = load_universe(full_market)
+            universe = load_universe()
         codes = universe.codes
         names = dict(universe._names)
 

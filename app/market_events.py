@@ -467,9 +467,9 @@ def _add_limit_stats(stocks: List[dict]) -> List[dict]:
     return stocks
 
 
-def get_dt_ladder(full_market: bool = False, date_dashed: str = None) -> dict:
-    """跌停连板：扫描股票池，推导连续跌停连板数，按高度分组。"""
-    universe = load_universe(full_market)
+def get_dt_ladder(date_dashed: str = None) -> dict:
+    """跌停连板：扫描本地股票池，推导连续跌停连板数，按高度分组。"""
+    universe = load_universe()
     codes = universe.codes
     names = dict(universe._names)
     if not names:
@@ -501,10 +501,9 @@ def get_dt_ladder(full_market: bool = False, date_dashed: str = None) -> dict:
     }
 
 
-def get_unsealed(direction: str = "up", full_market: bool = False,
-                 date_dashed: str = None) -> dict:
-    """未封板：扫描股票池，推导当日触板未封（涨停/跌停）的股票。"""
-    universe = load_universe(full_market)
+def get_unsealed(direction: str = "up", date_dashed: str = None) -> dict:
+    """未封板：扫描本地股票池，推导当日触板未封（涨停/跌停）的股票。"""
+    universe = load_universe()
     codes = universe.codes
     names = dict(universe._names)
     if not names:

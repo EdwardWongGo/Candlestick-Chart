@@ -178,26 +178,19 @@ class Universe:
         return True
 
 
-def load_universe(full_market: bool = None) -> Universe:
-    """按配置加载股票池。
+def load_universe() -> Universe:
+    """统一加载本地股票池（全市场 A 股）。
 
-    优先级：
-    1. 若本地已有全市场缓存且启用全市场 → 读缓存
-    2. full_market=True → 从通达信拉全市场并缓存
-    3. 否则 → 内置精选池（快速演示）
+    改造后不再区分「精选池 / 全市场」，所有筛选统一使用本地数据源：
+    1. 本地已有 universe.csv 缓存 → 直接读
+    2. 本地缺失 → 从通达信拉全市场列表并落盘缓存（仅首次）
     """
-    full = config.FULL_MARKET_DEFAULT if full_market is None else full_market
     cache_path = os.path.join(BASE_DIR, config.UNIVERSE_CACHE)
 
     u = Universe()
-    if full:
-        if u.load_csv(cache_path) and len(u) > 100:
-            return u
-        u.from_mootdx()
-        if len(u) > 0:
-            u.save_csv(cache_path)
+    if u.load_csv(cache_path) and len(u) > 100:
         return u
-
-    # 快速演示：内置精选池
-    u.from_list(config.DEMO_UNIVERSE)
+    u.from_mootdx()
+    if len(u) > 0:
+        u.save_csv(cache_path)
     return u

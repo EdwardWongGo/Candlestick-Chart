@@ -309,7 +309,14 @@ body {
 .history-item .hi-meta b { color: var(--up); }
 .history-item .hi-del { color: var(--text-faint); padding: 0 2px; }
 .history-item .hi-del:hover { color: var(--up); }
+.history-item .hi-check { accent-color: var(--accent); cursor: pointer; }
 .history-empty { font-size: 11px; color: var(--text-faint); }
+.history-batch {
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  padding-left: 10px; border-left: 1px solid var(--border);
+}
+.history-checkall { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-dim); cursor: pointer; }
+.history-checkall input { accent-color: var(--accent); }
 
 /* ===== 表格 ===== */
 .table-wrap { flex: 1; overflow: auto; }

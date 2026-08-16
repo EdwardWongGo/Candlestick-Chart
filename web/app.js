@@ -268,7 +268,6 @@ function collectParams() {
     change_min: num('changeMin'),
     change_max: num('changeMax'),
     exclude_st: document.getElementById('excludeSt').checked,
-    full_market: document.getElementById('fullMarket').checked,
     custom_codes: state.customCodes.length ? state.customCodes : null,
     sort_by: state.sortKey,
   };
@@ -433,27 +432,35 @@ async function loadHistory() {
     const d = await r.json();
     const list = d.history || [];
     const box = document.getElementById('historyList');
+    const batchBox = document.getElementById('historyBatch');
+    const checkAll = document.getElementById('historyCheckAll');
+
     if (!list.length) {
       box.innerHTML = '<span class="history-empty">暂无历史结果</span>';
+      batchBox.style.display = 'none';
+      checkAll.checked = false;
       return;
     }
+    batchBox.style.display = 'flex';
     box.innerHTML = list.map((h) => {
       const tf = (h.timeframes || []).map(lvTf).join('/') || '—';
-      const mk = (h.markets || []).map(marketZh).join('/') || '全市场' + (h.full_market ? '' : '精选');
+      const mk = (h.markets || []).map(marketZh).join('/') || '全部市场';
       return `<div class="history-item" data-id="${h.id}" title="点击加载该结果">
+        <input type="checkbox" class="hi-check" data-id="${h.id}">
         <span class="hi-time">${h.ts}</span>
         <span class="hi-meta">${tf} · ${mk} · 命中 <b>${h.matched_rows}</b> 条</span>
         <span class="hi-del" data-del="${h.id}" title="删除">✕</span>
       </div>`;
     }).join('');
-    // 点击加载历史结果
+
+    // 点击加载历史结果（点 checkbox 或删除按钮时不触发）
     box.querySelectorAll('.history-item').forEach((el) => {
       el.addEventListener('click', (e) => {
-        if (e.target.dataset.del) return;
+        if (e.target.classList.contains('hi-check') || e.target.dataset.del) return;
         loadHistoryItem(el.dataset.id);
       });
     });
-    // 删除
+    // 单条删除
     box.querySelectorAll('.hi-del').forEach((el) => {
       el.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -461,6 +468,23 @@ async function loadHistory() {
         loadHistory();
       });
     });
+    // 全选
+    checkAll.onchange = () => {
+      box.querySelectorAll('.hi-check').forEach((cb) => { cb.checked = checkAll.checked; });
+    };
+    // 批量删除
+    document.getElementById('historyBatchDel').onclick = async () => {
+      const ids = [...box.querySelectorAll('.hi-check:checked')].map((cb) => cb.dataset.id);
+      if (!ids.length) { alert('请先勾选要删除的记录'); return; }
+      if (!confirm(`确定删除选中的 ${ids.length} 条历史结果吗？`)) return;
+      await fetch(API.history + '/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      checkAll.checked = false;
+      loadHistory();
+    };
   } catch (e) { /* 忽略 */ }
 }
 

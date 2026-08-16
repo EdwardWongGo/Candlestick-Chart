@@ -112,7 +112,6 @@
         </div>
         <div class="checks">
           <label class="check"><input type="checkbox" id="excludeSt" checked> 剔除 ST</label>
-          <label class="check"><input type="checkbox" id="fullMarket"> 全市场扫描（较慢）</label>
         </div>
       </section>
 
@@ -142,6 +141,10 @@
       <div class="history-bar" id="historyBar">
         <div class="history-title">🕘 历史筛选结果</div>
         <div class="history-list" id="historyList"><span class="history-empty">暂无历史结果</span></div>
+        <div class="history-batch" id="historyBatch" style="display:none">
+          <label class="history-checkall"><input type="checkbox" id="historyCheckAll"> 全选</label>
+          <button class="ghost-btn" id="historyBatchDel">🗑 批量删除</button>
+        </div>
       </div>
 
       <div class="table-wrap">

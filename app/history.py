@@ -103,7 +103,6 @@ def _summary(rec: dict) -> dict:
         "ts": rec.get("ts"),
         "timeframes": params.get("timeframes") or [],
         "markets": params.get("markets") or [],
-        "full_market": params.get("full_market", False),
         "matched_rows": stats.get("matched_rows", 0),
         "matched_stocks": stats.get("matched_stocks", 0),
         "total_samples": stats.get("total_samples", 0),
