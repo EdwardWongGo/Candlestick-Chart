@@ -208,46 +208,38 @@ function renderPatterns() {
   box.querySelectorAll('.group-toggle').forEach((t) => {
     t.addEventListener('click', () => toggleGroup(t.dataset.group));
   });
-  // 看涨/看跌形态互斥
-  setupDirectionExclusion();
+  // 看涨/看跌形态单选互斥
+  setupPatternDirToggle();
 }
 
 function dirZh(d) { return d === 'bullish' ? '看涨' : (d === 'bearish' ? '看跌' : '中性'); }
 
-// 看涨/看跌形态互斥：勾选一方任一选项，另一方整体置灰禁用
+// 看涨/看跌形态单选互斥：选一个方向自动隐藏另一个方向（中性组始终显示）
 let _updateDirectionExclusion = null;
-function setupDirectionExclusion() {
-  const bullCbs = [...document.querySelectorAll('.pattern-group[data-dir="bullish"] .pat-main input')];
-  const bearCbs = [...document.querySelectorAll('.pattern-group[data-dir="bearish"] .pat-main input')];
+function setupPatternDirToggle() {
   const bullGroup = document.querySelector('.pattern-group[data-dir="bullish"]');
   const bearGroup = document.querySelector('.pattern-group[data-dir="bearish"]');
-  if (!bullCbs.length || !bearCbs.length) return;
 
   const update = () => {
-    const bullOn = bullCbs.some((cb) => cb.checked);
-    const bearOn = bearCbs.some((cb) => cb.checked);
-    // 看涨有勾选 → 看跌整组禁用并清空；否则（无看跌勾选时）恢复看跌可交互
-    if (bullOn) {
-      bearCbs.forEach((cb) => { cb.checked = false; cb.disabled = true; });
-    } else if (!bearOn) {
-      bearCbs.forEach((cb) => { cb.disabled = false; });
+    const val = document.querySelector('input[name="patternDir"]:checked')?.value || 'bullish';
+    if (val === 'bullish') {
+      bullGroup && bullGroup.classList.remove('hidden-group');
+      bearGroup && bearGroup.classList.add('hidden-group');
+      // 清空隐藏组的勾选，避免被 collectParams 收集
+      bearGroup && bearGroup.querySelectorAll('.pat-main input').forEach((cb) => { cb.checked = false; });
+    } else {
+      bearGroup && bearGroup.classList.remove('hidden-group');
+      bullGroup && bullGroup.classList.add('hidden-group');
+      bullGroup && bullGroup.querySelectorAll('.pat-main input').forEach((cb) => { cb.checked = false; });
     }
-    // 看跌有勾选 → 看涨整组禁用并清空；否则（无看涨勾选时）恢复看涨可交互
-    if (bearOn) {
-      bullCbs.forEach((cb) => { cb.checked = false; cb.disabled = true; });
-    } else if (!bullOn) {
-      bullCbs.forEach((cb) => { cb.disabled = false; });
-    }
-    bearGroup && bearGroup.classList.toggle('disabled', bullOn);
-    bullGroup && bullGroup.classList.toggle('disabled', bearOn);
   };
   _updateDirectionExclusion = update;
-  [...bullCbs, ...bearCbs].forEach((cb) => cb.addEventListener('change', update));
+  document.querySelectorAll('input[name="patternDir"]').forEach((r) => r.addEventListener('change', update));
 }
 
 function setAllPatterns(checked) {
-  document.querySelectorAll('#patternList .pat-main input[type=checkbox]').forEach((cb) => { cb.checked = checked; });
-  if (_updateDirectionExclusion) _updateDirectionExclusion();
+  // 单选模式下只操作「当前显示方向组」的形态（隐藏组不参与）
+  document.querySelectorAll('#patternList .pattern-group:not(.hidden-group) .pat-main input[type=checkbox]').forEach((cb) => { cb.checked = checked; });
 }
 
 function toggleGroup(direction) {
@@ -257,7 +249,6 @@ function toggleGroup(direction) {
   if (!cbs.length) return;
   const allChecked = cbs.every((cb) => cb.checked);
   cbs.forEach((cb) => { cb.checked = !allChecked; });   // 全选→清空，否则→全选
-  if (_updateDirectionExclusion) _updateDirectionExclusion();
 }
 
 // ===================== 文件导入 =====================
@@ -579,6 +570,7 @@ async function loadHistory() {
         const r = await fetch(API.historyItem(el.dataset.del), { method: 'DELETE' });
         const d = await r.json().catch(() => ({}));
         if (d.deleted === false) { alert('删除失败，请重试'); }
+        resetIfDeletedViewing([el.dataset.del]);   // 删除当前查看的记录则清空结果区
         loadHistory();
       });
     });
@@ -599,9 +591,17 @@ async function loadHistory() {
       const d = await r.json().catch(() => ({}));
       if (d.deleted !== ids.length) { alert(`删除完成：${d.deleted}/${ids.length} 条`); }
       checkAll.checked = false;
+      resetIfDeletedViewing(ids);   // 批量删除含当前查看记录则清空结果区
       loadHistory();
     };
   } catch (e) { /* 忽略 */ }
+}
+
+// 删除历史记录后，若删除了当前正在查看的记录，则清空结果区并恢复初始状态
+function resetIfDeletedViewing(ids) {
+  if (state.viewingHistory && ids.includes(state.viewingHistory.id)) {
+    clearResult();
+  }
 }
 
 async function loadHistoryItem(id) {
@@ -681,7 +681,12 @@ function applyLockedParams(params, source) {
       cb.disabled = false;
     }
   });
-  // 应用看涨/看跌互斥（历史已锁定看涨则看跌禁用，反之亦然）
+  // 根据历史形态方向设置单选按钮（看涨/看跌），再应用互斥隐藏
+  const histPats = params.patterns || [];
+  const hasBull = histPats.some((k) => (state.meta.patterns.find((p) => p.key === k) || {}).direction === 'bullish');
+  const hasBear = histPats.some((k) => (state.meta.patterns.find((p) => p.key === k) || {}).direction === 'bearish');
+  const dirRadio = document.querySelector(`input[name="patternDir"][value="${hasBear && !hasBull ? 'bearish' : 'bullish'}"]`);
+  if (dirRadio) dirRadio.checked = true;
   if (_updateDirectionExclusion) _updateDirectionExclusion();
 
   // 附加条件（单值）：历史有值则回填并锁定，无值则留空可追加
@@ -708,6 +713,34 @@ function applyLockedParams(params, source) {
   if (exEl) { exEl.checked = params.exclude_st !== false; exEl.disabled = true; }
 
   showLockBar(source);
+  checkExhausted();
+}
+
+// 检测「继续筛选」是否已无可追加条件：所有维度都被锁定则提示并禁用入口
+function checkExhausted() {
+  const scanBtn = document.getElementById('scanBtn');
+  if (!state.lockedParams) {
+    scanBtn.disabled = false;
+    return;
+  }
+  const tfAvail = document.querySelectorAll('#timeframeChips .chip:not(.locked)').length > 0;
+  const mkAvail = document.querySelectorAll('#marketChips .chip:not(.locked)').length > 0;
+  const patAvail = document.querySelectorAll('#patternList .pattern-group:not(.hidden-group) .pat-main input:not(:disabled)').length > 0;
+  const numIds = ['limitUpCountMin', 'volumeMin', 'priceMin', 'priceMax', 'changeMin', 'changeMax'];
+  const numAvail = numIds.some((id) => { const el = document.getElementById(id); return el && !el.disabled; });
+
+  const exhausted = !tfAvail && !mkAvail && !patAvail && !numAvail;
+  scanBtn.disabled = exhausted;
+  const bar = document.getElementById('lockBar');
+  if (bar) {
+    if (exhausted) {
+      bar.innerHTML = `🔒 已锁定历史条件 <b>${state.lockSource}</b> · ⚠️ 所有条件已占用，无可追加条件，请先「解除锁定」`;
+    } else {
+      bar.innerHTML = `🔒 已锁定历史条件 <b>${state.lockSource}</b>（不可删改，仅可追加）　<a href="#" id="unlockBtn">解除锁定</a>`;
+    }
+    const unlock = document.getElementById('unlockBtn');
+    if (unlock) unlock.addEventListener('click', (e) => { e.preventDefault(); unlockParams(); });
+  }
 }
 
 function unlockParams() {
@@ -720,12 +753,17 @@ function unlockParams() {
     const el = document.getElementById(id);
     if (el) el.disabled = false;
   });
-  // 重新应用看涨/看跌互斥
+  // 恢复单选按钮为「看涨」并重新应用隐藏逻辑
+  const bullRadio = document.querySelector('input[name="patternDir"][value="bullish"]');
+  if (bullRadio) bullRadio.checked = true;
   if (_updateDirectionExclusion) _updateDirectionExclusion();
+  // 恢复「开始筛选」入口可用
+  document.getElementById('scanBtn').disabled = false;
   hideLockBar();
 }
 
 function showLockBar(source) {
+  // 仅负责创建锁定提示条元素，具体内容与解锁绑定由 checkExhausted 统一处理
   let bar = document.getElementById('lockBar');
   if (!bar) {
     bar = document.createElement('div');
@@ -734,8 +772,6 @@ function showLockBar(source) {
     const sidebar = document.querySelector('.sidebar');
     sidebar.insertBefore(bar, sidebar.firstChild);
   }
-  bar.innerHTML = `🔒 已锁定历史条件 <b>${source}</b>（不可删改，仅可追加）　<a href="#" id="unlockBtn">解除锁定</a>`;
-  document.getElementById('unlockBtn').addEventListener('click', (e) => { e.preventDefault(); unlockParams(); });
 }
 
 function hideLockBar() {
@@ -1193,8 +1229,7 @@ function generateReport() {
   const rows = all.map((r) => `
     <tr>
       <td>${r.code}</td><td>${r.name}</td><td>${r.market_zh}</td><td>${r.timeframe_zh}</td>
-      <td>${r.pattern_zh}</td><td style="color:${r.direction === 'bullish' ? '#f23645' : '#26a69a'}">${r.direction_zh}</td>
-      <td>${r.date}</td><td>${r.strength}</td><td>${r.volume_ratio}×</td>
+      <td>${r.pattern_zh}</td><td>${r.strength}</td><td>${r.volume_ratio}×</td>
       <td>${r.change_pct}%</td><td>${r.resonance ? '✓' : ''}</td>
     </tr>`).join('');
 
@@ -1227,7 +1262,7 @@ function generateReport() {
   </div>
   <h2>全部信号（${all.length} 条，按强度排序）</h2>
   <table><thead><tr>
-    <th>代码</th><th>名称</th><th>板块</th><th>级别</th><th>形态</th><th>方向</th><th>日期</th><th>强度</th><th>放量</th><th>涨跌</th><th>共振</th>
+    <th>代码</th><th>名称</th><th>板块</th><th>级别</th><th>形态</th><th>强度</th><th>放量</th><th>涨跌</th><th>共振</th>
   </tr></thead><tbody>${rows}</tbody></table>
   ${resonanceStocks.length ? `<h2>跨级别共振股票（${resonanceStocks.length} 只）</h2><div>${resonanceStocks.map((s) => `<span class="tag">${s}</span>`).join('')}</div>` : ''}
   <div class="disclaimer">本报告由 A股量化分析工具自动生成，仅用于技术形态学习与研究，不构成任何投资建议。股市有风险，投资需谨慎。</div>

@@ -47,8 +47,23 @@ def save_history(params: dict, result: dict) -> Optional[dict]:
         return None
 
 
+def _should_skip(rec: dict) -> bool:
+    """判断历史记录是否应被屏蔽（不显示在列表中）。
+
+    屏蔽两类：
+    1. 同步服务器数据产生的记录（params.sync == True）
+    2. 自定义股票池产生的记录（params.custom_codes 非空，如导入 EBK 后的自动筛选）
+    """
+    params = rec.get("params") or {}
+    if params.get("sync"):
+        return True
+    if params.get("custom_codes"):
+        return True
+    return False
+
+
 def list_history(limit: int = 100) -> List[dict]:
-    """列出所有历史记录摘要（按时间倒序）。"""
+    """列出所有历史记录摘要（按时间倒序，已屏蔽同步/自定义股票池记录）。"""
     if not os.path.isdir(HISTORY_DIR):
         return []
     files = sorted(
@@ -56,13 +71,17 @@ def list_history(limit: int = 100) -> List[dict]:
         key=os.path.getmtime, reverse=True,
     )
     out = []
-    for p in files[:limit]:
+    for p in files:
         try:
             with open(p, "r", encoding="utf-8") as f:
                 rec = json.load(f)
+            if _should_skip(rec):
+                continue   # 屏蔽同步服务器数据 / 自定义股票池记录
             out.append(_summary(rec))
         except Exception:
             continue
+        if len(out) >= limit:
+            break
     return out
 
 

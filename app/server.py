@@ -370,8 +370,8 @@ def export_csv():
 
     fieldnames = [
         "股票代码", "股票名称", "市场板块", "所属级别", "形态名称", "形态英文",
-        "信号方向", "出现日期", "信号强度", "放量倍数", "现价",
-        "涨跌幅%", "近一年涨停次数", "多级别共振",
+        "信号强度", "放量倍数", "现价",
+        "涨跌幅%", "年内涨幅%", "近一年涨停次数", "多级别共振",
     ]
     buf = io.StringIO()
     writer = csv.writer(buf)
@@ -381,9 +381,8 @@ def export_csv():
             r.get("code"), r.get("name"), r.get("market_zh"),
             r.get("timeframe_zh"),
             r.get("pattern_zh"), r.get("pattern_en"),
-            r.get("direction_zh"), r.get("date"),
             r.get("strength"), r.get("volume_ratio"), r.get("close"),
-            r.get("change_pct"), r.get("limit_1y"),
+            r.get("change_pct"), r.get("ytd_change"), r.get("limit_1y"),
             "是" if r.get("resonance") else "否",
         ])
 

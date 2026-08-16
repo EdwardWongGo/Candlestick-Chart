@@ -225,6 +225,11 @@ body {
 
 /* ===== 形态列表 ===== */
 .pattern-list { max-height: 260px; overflow-y: auto; }
+.pattern-dir-toggle { display: flex; gap: 14px; margin: 2px 0 8px; padding: 0 2px; }
+.dir-opt { display: flex; align-items: center; gap: 5px; font-size: 12px; cursor: pointer; color: var(--text-dim); user-select: none; }
+.dir-opt input { accent-color: var(--accent); }
+.dir-opt:has(input:checked) { color: var(--text); font-weight: 600; }
+.hidden-group { display: none !important; }
 .pattern-group { margin-bottom: 8px; }
 .pattern-group.disabled { opacity: .4; pointer-events: none; }
 .pattern-group-title {
