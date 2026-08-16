@@ -271,6 +271,9 @@ body {
 .sidebar.scanning > .stop-btn { pointer-events: auto; opacity: 1; }
 .sidebar.scanning .progress { pointer-events: none; }
 
+/* 筛选期间禁用结果栏交互（结束后恢复） */
+.content.scanning { pointer-events: none; opacity: .5; }
+
 /* ===== 结果栏 ===== */
 .result-bar {
   display: flex; align-items: center; justify-content: space-between;

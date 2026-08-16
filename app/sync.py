@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Callable, List, Optional
 
@@ -28,6 +30,9 @@ from .data.cache import KlineCache
 # 项目根目录（sync.py 位于 app/ 下，上溯一级）
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SYNC_META_PATH = os.path.join(BASE_DIR, "output", "cache", "sync_meta.json")
+
+# 并发同步线程数（mootdx 为 TCP 短请求，8 并发约提速 2 倍）
+_SYNC_WORKERS = 8
 
 # 增量同步时拉取的最近 K 线根数（用于对比本地最新日期，追加新 bar）
 SYNC_LOOKBACK = 5
@@ -66,53 +71,74 @@ def get_sync_status() -> dict:
 # 增量同步
 # ---------------------------------------------------------------------------
 def sync_incremental(codes: List[str], timeframes: List[str],
-                     progress_cb: Optional[Callable[[int, int, str], None]] = None) -> dict:
-    """把给定股票池的最新 K 线增量同步到本地缓存。
+                     progress_cb: Optional[Callable[[int, int, str], None]] = None,
+                     cancel_cb: Optional[Callable[[], bool]] = None) -> dict:
+    """把给定股票池的最新 K 线增量同步到本地缓存（多线程并发拉取）。
 
     codes:      股票代码列表
     timeframes: 需要同步的级别（daily/weekly/monthly）
     progress_cb: 进度回调 (done, total, msg)
+    cancel_cb:  取消回调，返回 True 时中断（返回 cancelled=True，不抛异常）
 
-    返回 {synced, failed, elapsed, last_sync}
+    返回 {synced, failed, elapsed, last_sync, cancelled}
     """
     source = get_source()
     cache = KlineCache()
     t0 = time.time()
 
-    synced = 0      # 有数据更新的股票×级别数
-    failed = 0      # 拉取失败的股票×级别数
     total = len(codes) * len(timeframes)
-    done = 0
+    lock = threading.Lock()
+    state = {"done": 0, "synced": 0, "failed": 0, "cancelled": False}
 
-    for code in codes:
-        for tf in timeframes:
-            try:
-                cached = cache.get(code, tf, ttl=None)   # 忽略 ttl 读原始缓存
-                if cached:
-                    last_dt = cached[-1].dt
-                    latest = source.get_bars(code, tf, SYNC_LOOKBACK)
-                    new_bars = [b for b in latest if b.dt > last_dt]
-                    if new_bars:
-                        merged = cached + new_bars
-                        cache.set(code, tf, merged[-config.MIN_BARS.get(tf, 120):])
-                        synced += 1
-                else:
-                    bars = source.get_bars(code, tf, config.KLINE_OFFSET)
-                    if bars:
-                        cache.set(code, tf, bars[-config.MIN_BARS.get(tf, 120):])
-                        synced += 1
-            except Exception:
-                failed += 1
-            done += 1
+    def _task(item):
+        """单个 (code, tf) 的同步任务。返回 synced/skip/failed。"""
+        if state["cancelled"] or (cancel_cb and cancel_cb()):
+            state["cancelled"] = True
+            return None
+        code, tf = item
+        try:
+            cached = cache.get(code, tf, ttl=None)   # 忽略 ttl 读原始缓存
+            if cached:
+                last_dt = cached[-1].dt
+                latest = source.get_bars(code, tf, SYNC_LOOKBACK)
+                new_bars = [b for b in latest if b.dt > last_dt]
+                if new_bars:
+                    merged = cached + new_bars
+                    cache.set(code, tf, merged[-config.MIN_BARS.get(tf, 120):])
+                    return "synced"
+            else:
+                bars = source.get_bars(code, tf, config.KLINE_OFFSET)
+                if bars:
+                    cache.set(code, tf, bars[-config.MIN_BARS.get(tf, 120):])
+                    return "synced"
+            return "skip"
+        except Exception:
+            return "failed"
+
+    tasks = [(c, tf) for c in codes for tf in timeframes]
+    with ThreadPoolExecutor(max_workers=_SYNC_WORKERS) as ex:
+        for item, result in zip(tasks, ex.map(_task, tasks)):
+            with lock:
+                state["done"] += 1
+                if result == "synced":
+                    state["synced"] += 1
+                elif result == "failed":
+                    state["failed"] += 1
+                done = state["done"]
             if progress_cb:
-                progress_cb(done, total, f"同步 {code} {tf}")
+                progress_cb(done, total, f"同步 {item[0]} {item[1]}")
+            if state["cancelled"]:
+                break
 
     last_sync = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    _save_meta({"last_sync": last_sync, "synced_count": synced, "failed": failed})
+    if not state["cancelled"]:
+        _save_meta({"last_sync": last_sync, "synced_count": state["synced"],
+                    "failed": state["failed"]})
 
     return {
-        "synced": synced,
-        "failed": failed,
+        "synced": state["synced"],
+        "failed": state["failed"],
         "elapsed": round(time.time() - t0, 2),
         "last_sync": last_sync,
+        "cancelled": state["cancelled"],
     }

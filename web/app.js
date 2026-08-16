@@ -38,6 +38,7 @@ const state = {
   meta: null,
   results: [],
   scanStats: null,
+  scanElapsedMs: null,  // 本次筛选总耗时（毫秒）
   viewingHistory: null,  // 当前查看的历史记录 {id, ts}，null=非历史视图
   customCodes: [],       // 导入的自定义股票代码
   importNames: {},       // 导入代码的名称
@@ -281,6 +282,9 @@ function setScanning(scanning) {
   state.scanning = scanning;
   const sidebar = document.querySelector('.sidebar');
   sidebar.classList.toggle('scanning', scanning);
+  // 筛选期间禁用结果栏交互，结束后恢复
+  const content = document.querySelector('.content');
+  if (content) content.classList.toggle('scanning', scanning);
   document.getElementById('scanBtn').classList.toggle('hidden', scanning);
   document.getElementById('stopBtn').classList.toggle('hidden', !scanning);
 }
@@ -291,6 +295,13 @@ function formatDuration(sec) {
   const m = Math.floor(sec / 60);
   const s = sec % 60;
   return s ? `${m} 分 ${s} 秒` : `${m} 分钟`;
+}
+
+function formatMs(ms) {
+  if (ms == null) return '';
+  if (ms < 1000) return `${ms} 毫秒`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(2)} 秒（${ms} 毫秒）`;
+  return `${formatDuration(ms / 1000)}（${ms} 毫秒）`;
 }
 
 async function startScan(params) {
@@ -376,6 +387,13 @@ function finishScan(result, error, errlog) {
   }
   renderResults();
   state.viewingHistory = null;
+  // 在统计栏显示本次筛选总耗时（精确到毫秒）
+  const ms = (result && result.elapsed_ms != null) ? result.elapsed_ms : null;
+  const statsEl = document.getElementById('stats');
+  if (statsEl && ms != null) {
+    const cur = statsEl.innerHTML;
+    statsEl.innerHTML = `${cur}　·　⏱ 耗时 <b>${formatMs(ms)}</b>`;
+  }
   updateResultButtons();
   // 筛选完成后刷新同步时间与历史结果栏
   initSyncStatus();

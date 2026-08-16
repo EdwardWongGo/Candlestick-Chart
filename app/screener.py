@@ -19,7 +19,6 @@ from typing import Callable, Dict, List, Optional
 import config
 from .models import Candle, PatternMatch, ScanResult
 from .patterns import detect_patterns
-from .patterns.base import relative_position, position_label, volume_ratio
 from .indicators import change_pct, above_ma250
 from .limit_analysis import count_limit_up
 from .data.source import get_source, get_quote_source
@@ -75,6 +74,7 @@ class Screener:
         directions = params.get("directions") or None
         exclude_st = params.get("exclude_st", True)
         sync = params.get("sync", False)                     # 是否筛选前同步服务器数据
+        self.sync = sync                                     # 供 _get_bars 决定缓存读取策略
         limit_up_count_min = params.get("limit_up_count_min")  # 近一年涨停次数下限
 
         # 1. 股票池（导入的自定义代码优先，否则统一用本地全市场列表）
@@ -92,11 +92,23 @@ class Screener:
         if markets:
             codes = [c for c in codes if config.classify_market(c) in markets]
 
+        # 统一进度：同步 + 扫描 合并为一个连续进度条（避免进度从 99% 回退到 0%）
+        sync_tasks = len(codes) * len(timeframes) if sync else 0
+        scan_tasks = len(codes) * len(timeframes)
+        total_tasks = sync_tasks + scan_tasks
+
         # 1.1a 同步服务器数据：勾选后，筛选前先把最新数据增量同步到本地
         sync_status = None
         if sync:
             from .sync import sync_incremental
-            sync_status = sync_incremental(codes, timeframes, progress_cb=progress_cb)
+            def _sync_cb(d, t, msg):
+                if progress_cb:
+                    progress_cb(d, total_tasks, f"同步 {msg}")
+            sync_status = sync_incremental(codes, timeframes,
+                                           progress_cb=_sync_cb,
+                                           cancel_cb=cancel_cb)
+            if sync_status.get("cancelled"):
+                raise ScanCancelled()
 
         # 1.1b 近一年涨停次数预筛（基于日线推导，可与其他条件自由组合）
         limit_1y_map: Dict[str, int] = {}
@@ -147,11 +159,11 @@ class Screener:
         total_samples = len(codes)
 
         results: List[ScanResult] = []
-        total_tasks = len(codes) * len(timeframes)
-        done = 0
+        done = sync_tasks                             # 从同步结束处继续（统一进度）
         failed = 0                                   # 单只失败计数（容错，不中断整体）
         per_code_matches: Dict[str, Dict[str, List[PatternMatch]]] = {}
         per_code_close: Dict[str, float] = {}
+        per_code_bars: Dict[str, Dict[str, List[Candle]]] = {}   # 缓存已读取的 bars，供第 3 阶段复用
 
         def _cancelled() -> bool:
             return bool(cancel_cb and cancel_cb())
@@ -160,6 +172,7 @@ class Screener:
             if _cancelled():
                 raise ScanCancelled()
             per_code_matches[code] = {}
+            per_code_bars[code] = {}
             for tf in timeframes:
                 if _cancelled():
                     raise ScanCancelled()
@@ -189,6 +202,7 @@ class Screener:
                     continue
                 if directions:
                     matches = [m for m in matches if m.direction in directions]
+                per_code_bars[code][tf] = bars          # 复用：第 3 阶段不再重复读缓存
                 if matches:
                     per_code_matches[code][tf] = matches
                     per_code_close[code] = bars[-1].close
@@ -216,12 +230,8 @@ class Screener:
                 limit_1y_map[code] = limit_1y
             for tf in matched_tfs:
                 matches = per_code_matches[code][tf]
-                bars = self.cache.get(code, tf)
-                if bars is None:
-                    bars = self.source.get_bars(code, tf, config.KLINE_OFFSET)
-                    if bars:
-                        # 裁剪到与第 2 阶段一致的 MIN_BARS，保证下标对齐
-                        bars = bars[-config.MIN_BARS.get(tf, 120):]
+                # 直接复用第 2 阶段已读取的 bars，避免重复读缓存/触发过期重拉（性能关键）
+                bars = per_code_bars.get(code, {}).get(tf)
                 if not bars:
                     continue
                 for m in matches:
@@ -236,12 +246,13 @@ class Screener:
         sort_by = params.get("sort_by", "strength")
         results = self._sort(results, sort_by)
 
-        elapsed = round(time.time() - t0, 2)
+        elapsed_ms = int((time.time() - t0) * 1000)   # 总耗时（毫秒，精确）
         matched_stocks = len({r.code for r in results})
         return {
             "results": [r.to_dict() for r in results],
             "total": len(results),
-            "elapsed": elapsed,
+            "elapsed": round(elapsed_ms / 1000, 2),   # 兼容旧的秒级字段
+            "elapsed_ms": elapsed_ms,                 # 精确到毫秒
             "universe_size": total_samples,
             "scanned": done,
             "failed": failed,
@@ -257,8 +268,16 @@ class Screener:
 
     # ------------------------------------------------------------------
     def _get_bars(self, code: str, tf: str) -> List[Candle]:
-        """优先读缓存，否则拉取并写缓存。"""
-        cached = self.cache.get(code, tf)
+        """优先读缓存，否则拉取并写缓存。
+
+        缓存读取策略（性能关键）：
+        - 未同步数据（sync=False）：忽略 ttl，只要有本地缓存就直接用（"基于本地数据"），
+          避免缓存超过 1 小时被判定过期而重新网络拉取，这是未同步时筛选慢的主因。
+        - 同步数据（sync=True）：同步阶段已把最新数据增量写入缓存（sync_incremental），
+          此处用默认 ttl 即可命中新鲜缓存。
+        """
+        ttl = None if not getattr(self, "sync", False) else 3600
+        cached = self.cache.get(code, tf, ttl=ttl)
         if cached is not None:
             return cached
         bars = self.source.get_bars(code, tf, config.KLINE_OFFSET)
@@ -299,8 +318,9 @@ class Screener:
         if change_max is not None and chg > change_max:
             return None
 
-        # 相对位置（仅作结果展示字段，不作为筛选条件）
-        pos = relative_position(bars, i)
+        # 相对位置字段已废弃（「相对位置」筛选条件与展示列均已移除），
+        # 不再做 O(60) 的支撑阻力计算，仅保留占位，避免无谓开销拖慢全市场扫描
+        pos = -1.0
 
         # 级别权重
         weight = config.TIMEFRAMES[tf]["weight"]
@@ -325,8 +345,8 @@ class Screener:
             volume_ratio=vr,
             close=price,
             change_pct=round(chg, 2),
-            position=pos if pos is not None else -1,
-            position_label=position_label(pos),
+            position=-1.0,
+            position_label="",
             resonance=False,
             resonance_levels=[],
             candle_indexes=m.candle_indexes,

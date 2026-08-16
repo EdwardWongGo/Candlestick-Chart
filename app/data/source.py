@@ -14,6 +14,7 @@ Author: HZQ
 """
 from __future__ import annotations
 
+import threading
 import time
 from typing import List, Optional
 
@@ -41,15 +42,16 @@ class MootdxSource(DataSource):
     name = "mootdx"
 
     def __init__(self):
-        self._client = None
+        self._local = threading.local()   # 线程本地 client，支持多线程并发拉取
 
     @property
     def client(self):
-        if self._client is None:
+        # 线程本地 client：多线程并发拉取时各自持有独立连接，互不干扰
+        if not hasattr(self._local, "client"):
             from mootdx.quotes import Quotes
             # 用最快服务器，缓存 client
-            self._client = Quotes.factory(market="std")
-        return self._client
+            self._local.client = Quotes.factory(market="std")
+        return self._local.client
 
     def _frequency(self, timeframe: str) -> int:
         return config.TIMEFRAMES[timeframe]["frequency"]
