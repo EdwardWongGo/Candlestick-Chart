@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 傻瓜式一键启动器
 
@@ -9,6 +9,7 @@
   4. 启动股票筛选工具，并自动打开浏览器
 
 整个过程中出现任何问题，都会用大白话告诉你该怎么做。
+（若仍失败，本程序会把详细原因写进「launcher_debug.log」，方便排查。）
 """
 
 import os
@@ -17,17 +18,46 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import webbrowser
 
 # 当前程序所在目录（即项目根目录）
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REQ_FILE = os.path.join(BASE_DIR, "requirements.txt")
 RUN_FILE = os.path.join(BASE_DIR, "run.py")
-GUIDE_FILE = os.path.join(BASE_DIR, "使用说明.html")
 APP_URL = "http://127.0.0.1:8000"
 
 # 运行所需的组件（内部用，不会展示给用户）
 REQUIRED_MODULES = ["flask", "pandas", "numpy", "mootdx", "requests"]
+
+# 调试日志文件（任何失败都会写到这里，方便用户反馈）
+DEBUG_LOG = os.path.join(BASE_DIR, "launcher_debug.log")
+
+
+# ---------------------------------------------------------------------------
+# 调试日志
+# ---------------------------------------------------------------------------
+def _log(msg: str):
+    """同时打印到屏幕，并追加写入调试日志文件。"""
+    print(msg)
+    try:
+        with open(DEBUG_LOG, "a", encoding="utf-8") as f:
+            f.write(msg + "\n")
+    except Exception:
+        pass
+
+
+def _log_head():
+    try:
+        with open(DEBUG_LOG, "a", encoding="utf-8") as f:
+            f.write("\n" + "=" * 60 + "\n")
+            f.write("启动时间: " + time.strftime("%Y-%m-%d %H:%M:%S") + "\n")
+            f.write("Python: " + sys.executable + "\n")
+            f.write("版本: " + sys.version.replace("\n", " ") + "\n")
+            f.write("工作目录: " + BASE_DIR + "\n")
+            f.write("=" * 60 + "\n")
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +81,8 @@ def _spinner_run(cmd, cwd=None):
             cmd, cwd=cwd,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-    except Exception:
+    except Exception as e:
+        _log(f"      （后台命令启动失败：{e}）")
         return 1
     frames = ["|", "/", "-", "\\"]
     i = 0
@@ -76,7 +107,7 @@ def _check_modules():
 
 def _port_in_use(port=8000):
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        with socket.socket(socket.AF_INET, socket.STREAM) as s:
             s.settimeout(0.6)
             return s.connect_ex(("127.0.0.1", port)) == 0
     except Exception:
@@ -163,8 +194,9 @@ def main():
     try:
         os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
         print("      ✅ 数据目录已就绪。")
-    except Exception:
+    except Exception as e:
         print("      ⚠️  数据目录创建失败，请检查是否有写入权限。")
+        _log(f"      （数据目录错误：{e}）")
 
     # 第 4 步：启动程序
     _section(4, "启动程序")
@@ -184,12 +216,25 @@ def main():
 
     # 用当前 Python 运行 run.py（阻塞；关闭窗口即停止）
     try:
-        subprocess.call([sys.executable, RUN_FILE], cwd=BASE_DIR)
+        proc = subprocess.Popen([sys.executable, RUN_FILE], cwd=BASE_DIR)
+        # 等服务真正起来后，再确保浏览器被打开（双保险）
+        for _ in range(40):
+            if _port_in_use():
+                break
+            if proc.poll() is not None:
+                break
+            time.sleep(0.5)
+        else:
+            pass
+        _open_browser(APP_URL)
+        proc.wait()
     except KeyboardInterrupt:
         pass
     except Exception as e:
-        print(f"      ⚠️  启动时遇到问题：{e}")
+        _log(f"      ⚠️  启动时遇到问题：{e}")
+        _log(traceback.format_exc())
         print("      请关闭本窗口后，重新双击「一键启动.bat」再试。")
+        print("      若仍不行，请把本程序目录里的「launcher_debug.log」发来。")
         _press_enter_to_exit()
         return
 
@@ -198,4 +243,15 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    _log_head()
+    try:
+        main()
+    except Exception:
+        # 任何未预料到的错误，都原样记录并友好提示，绝不让窗口一闪而过
+        _log("【未预料的错误】")
+        _log(traceback.format_exc())
+        print()
+        print("      ⚠️  启动过程中出现了意外问题。")
+        print("      请把本程序目录里的「launcher_debug.log」文件发来，")
+        print("      我就能帮你准确定位并解决。")
+        _press_enter_to_exit()

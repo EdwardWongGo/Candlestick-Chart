@@ -1,16 +1,13 @@
-@echo off
+﻿@echo off
 rem ============================================================
 rem  一键启动 —— 双击即可使用，无需任何专业知识
 rem  本脚本会自动找到或准备好运行环境，然后启动程序
 rem ============================================================
 chcp 65001 >nul
+title A股蜡烛图形态筛选工具 - 启动中
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
-set "PYUTF8=1"
-set "PYTHONIOENCODING=utf-8"
-
-rem ---- 依次寻找一个可用的 Python 运行环境 ----
 set "PY="
 
 rem 1) 程序自带的运行环境（测试机无需安装任何东西）
@@ -49,15 +46,20 @@ if exist "%~dp0runtime\python.exe" (
 
 echo.
 echo  ⚠️ 运行环境准备失败，请检查网络后重新双击本文件。
+echo  （若反复失败，可右键本文件 → 属性 → 勾选“解除锁定” → 确定，再双击。）
 pause
 exit /b 1
 
 :found
-rem ---- 启动傻瓜式引导 ----
+echo.
+echo   即将使用的运行环境：
+echo     %PY%
+echo.
 "%PY%" "%~dp0launcher.py"
-if errorlevel 1 (
+set "RC=%errorlevel%"
+if not "%RC%"=="0" (
     echo.
-    echo  ⚠️ 启动时遇到问题，请截图本窗口内容反馈。
+    echo  ⚠️ 启动时遇到问题（错误码 %RC%），请把本程序目录里的 launcher_debug.log 发来，或截图本窗口。
     pause
 )
 endlocal
