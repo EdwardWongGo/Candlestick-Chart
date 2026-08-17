@@ -576,6 +576,9 @@ def get_unsealed(direction: str = "up", date_dashed: str = None) -> dict:
     date_dashed 为空时取最新交易日；指定日期时在本地日线中定位该日 bar 与其前一 bar。
     """
     target = date_dashed or latest_trade_date()
+    key = f"{direction}:{target}"
+    if key in _unsealed_cache:
+        return _unsealed_cache[key]
     universe = load_universe()
     codes = universe.codes
     names = dict(universe._names)
@@ -611,12 +614,19 @@ def get_unsealed(direction: str = "up", date_dashed: str = None) -> dict:
                 "market_zh": _market_zh(code),
             })
     results.sort(key=lambda r: -r["change_pct"])
-    return {
+    result = {
         "date": target,
         "direction": direction,
         "count": len(results),
         "stocks": results,
     }
+    # 按「方向:日期」缓存：未封板推导需全市场扫描（约 30s），同一天内封板率/涨停打开等共享结果
+    _unsealed_cache[key] = result
+    return result
+
+
+# 未封板结果缓存：{direction:date -> dict}（全市场扫描昂贵，按日缓存避免重复计算）
+_unsealed_cache: dict = {}
 
 
 def get_seal_rate(direction: str = "up") -> dict:

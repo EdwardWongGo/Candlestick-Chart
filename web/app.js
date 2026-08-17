@@ -65,6 +65,7 @@ const state = {
   marketIdx: 'sh000001', // 市场分析：当前指数
   marketTf: 'day',       // 市场分析：日/周/月
   marketChart: null,     // 市场分析 K 线图实例
+  eventCache: {},        // 事件数据缓存：{tab:sub:date -> data}（涨停/跌停/连板/题材）
   customCodes: [],       // 导入的自定义股票代码
   importNames: {},       // 导入代码的名称
   dataSource: 'local',   // 数据来源：local(本地) / server(服务器) / upload(上传文件)
@@ -1334,6 +1335,17 @@ async function loadEvent(tab) {
   document.getElementById('eventStats').textContent = '加载中…';
   document.getElementById('eventContent').innerHTML = '';
   const sub = state.eventSub;
+  // 缓存机制：涨停/跌停/连板/题材热点 按「tab+子页+日期」缓存，再次选择相同日期直接读缓存（避免重复请求）
+  const cacheable = ['zt', 'dt', 'ladder', 'hotspot'].includes(tab);
+  const cacheKey = `${tab}:${sub}:${date || 'today'}`;
+  if (cacheable && state.eventCache && state.eventCache[cacheKey]) {
+    renderEventData(tab, sub, state.eventCache[cacheKey]);
+    return;
+  }
+  // 涨停/跌停「打开（未封板）」需全市场扫描本地日线，提示耗时较长
+  if ((tab === 'zt' || tab === 'dt') && sub === 'opened') {
+    document.getElementById('eventStats').textContent = '正在扫描全市场本地数据推导未封板，约需 1 分钟，请稍候…';
+  }
   try {
     // 涨停/跌停：标题旁内联展示今日/昨日封板率统计（随行情实时更新）
     if (tab === 'zt' || tab === 'dt') {
@@ -1344,31 +1356,67 @@ async function loadEvent(tab) {
     } else {
       clearTitleSealRate();
     }
+    let data;
     if (tab === 'zt') {
-      if (sub === 'opened') renderOpened('up', await (await fetchTimeout(API.opened('up'))).json());
-      else renderBoard('zt', await (await fetchTimeout(API.board('zt', date))).json());
+      data = sub === 'opened'
+        ? await (await fetchTimeout(API.opened('up'), {}, 90000)).json()   // 全市场扫描，放宽超时
+        : await (await fetchTimeout(API.board('zt', date))).json();
     } else if (tab === 'dt') {
-      if (sub === 'opened') renderOpened('down', await (await fetchTimeout(API.opened('down'))).json());
-      else renderBoard('dt', await (await fetchTimeout(API.board('dt', date))).json());
+      data = sub === 'opened'
+        ? await (await fetchTimeout(API.opened('down'), {}, 90000)).json()
+        : await (await fetchTimeout(API.board('dt', date))).json();
     } else if (tab === 'ladder') {
-      if (sub === 'down') renderLadder(await (await fetchTimeout(API.ladderDown())).json(), true);
-      else renderLadder(await (await fetchTimeout(API.ladder(date))).json(), false);
+      data = sub === 'down'
+        ? await (await fetchTimeout(API.ladderDown())).json()
+        : await (await fetchTimeout(API.ladder(date))).json();
     } else if (tab === 'lhb') {
-      renderDragonTiger(await (await fetchTimeout(API.dragonTiger(date))).json());
+      data = await (await fetchTimeout(API.dragonTiger(date))).json();
     } else if (tab === 'hotspot') {
-      renderHotspot(await (await fetchTimeout(API.hotspot(date))).json());
+      data = await (await fetchTimeout(API.hotspot(date))).json();
     } else if (tab === 'news') {
-      renderDailyNews(await (await fetchTimeout(API.dailyNews)).json());
+      data = await (await fetchTimeout(API.dailyNews)).json();
     } else if (tab === 'market') {
-      renderMarket(await (await fetchTimeout(API.marketOverview)).json());
+      data = await (await fetchTimeout(API.marketOverview)).json();
+    } else {
+      return;
+    }
+    renderEventData(tab, sub, data);
+    if (cacheable) {
+      if (!state.eventCache) state.eventCache = {};
+      state.eventCache[cacheKey] = data;
     }
   } catch (e) {
     console.error(e);
-    // 明确错误/空状态，避免一直「加载中」
+    // 明确错误/空状态 + 重新加载按钮（超时/失败后可一键重试）
     const msg = (e && e.name === 'AbortError') ? '⏱ 加载超时，请稍后重试' : '⚠️ 加载失败，请检查网络';
-    document.getElementById('eventStats').textContent = msg;
+    document.getElementById('eventStats').innerHTML =
+      `${msg} <button class="ghost-btn" id="eventReloadBtn" style="margin-left:8px">🔄 重新加载</button>`;
     document.getElementById('eventContent').innerHTML =
       `<div class="event-empty" style="padding:60px;text-align:center;color:var(--text-faint)">${msg}</div>`;
+    const rb = document.getElementById('eventReloadBtn');
+    if (rb) rb.addEventListener('click', () => loadEvent(tab));
+  }
+}
+
+// 统一渲染事件数据（供 loadEvent 直连调用与缓存命中复用）
+function renderEventData(tab, sub, data) {
+  if (tab === 'zt') {
+    if (sub === 'opened') renderOpened('up', data);
+    else renderBoard('zt', data);
+  } else if (tab === 'dt') {
+    if (sub === 'opened') renderOpened('down', data);
+    else renderBoard('dt', data);
+  } else if (tab === 'ladder') {
+    if (sub === 'down') renderLadder(data, true);
+    else renderLadder(data, false);
+  } else if (tab === 'lhb') {
+    renderDragonTiger(data);
+  } else if (tab === 'hotspot') {
+    renderHotspot(data);
+  } else if (tab === 'news') {
+    renderDailyNews(data);
+  } else if (tab === 'market') {
+    renderMarket(data);
   }
 }
 
@@ -1677,17 +1725,38 @@ function renderHotspot(d) {
 
 function renderDailyNews(d, keepKw) {
   const kw = (keepKw || '').trim();
-  const all = d.news || [];
-  // 关键字过滤：标题 / 摘要 / 关联股票代码
-  const news = kw
-    ? all.filter((n) =>
-        (n.title || '').includes(kw) ||
-        (n.summary || '').includes(kw) ||
-        (n.stocks || []).some((c) => c.includes(kw)))
-    : all;
   document.getElementById('eventStats').innerHTML =
     `每日新闻 <b>${d.date}</b>（全天 00:00~23:59）· 共 <b>${d.count}</b> 条（★ 为重点）` +
-    (kw ? ` · 🔍 筛选「<b>${kw}</b>」命中 <b>${news.length}</b> 条` : '');
+    (kw ? ` · 🔍 筛选「<b>${kw}</b>」命中 <b>${filterNewsCount(d, kw)}</b> 条` : '');
+  // 首次渲染：搜索框 + 列表容器；之后输入只更新列表（不重建输入框，保持焦点，支持完整关键词）
+  if (!document.getElementById('newsList')) {
+    document.getElementById('eventContent').innerHTML = `
+      <div class="news-search-bar">
+        <input type="text" id="newsSearch" placeholder="🔍 输入关键字过滤新闻（标题/摘要/股票代码，支持中英文/数字混合）…" autocomplete="off">
+      </div>
+      <div id="newsList"></div>`;
+    document.getElementById('newsSearch').addEventListener('input', (e) => renderNewsList(d, e.target.value));
+  } else {
+    document.getElementById('newsSearch').value = kw;
+  }
+  renderNewsList(d, kw);
+}
+
+function filterNewsCount(d, kw) {
+  return filterNews(d, kw).length;
+}
+
+function filterNews(d, kw) {
+  const all = d.news || [];
+  if (!kw) return all;
+  return all.filter((n) =>
+    (n.title || '').includes(kw) ||
+    (n.summary || '').includes(kw) ||
+    (n.stocks || []).some((c) => c.includes(kw)));
+}
+
+function renderNewsList(d, kw) {
+  const news = filterNews(d, kw);
 
   // 按时间段归并：盘前 / 盘中 / 盘后
   const bucket = (time) => {
@@ -1725,15 +1794,11 @@ function renderDailyNews(d, keepKw) {
     </div>`;
   }).join('');
 
-  document.getElementById('eventContent').innerHTML =
-    `<div class="news-search-bar">
-       <input type="text" id="newsSearch" value="${kw}" placeholder="🔍 输入关键字过滤新闻（标题/摘要/股票代码）…">
-     </div>` +
-    (html || '<div style="padding:40px;color:var(--text-faint);text-align:center">' + (kw ? '没有匹配「' + kw + '」的新闻' : '暂无当日新闻') + '</div>');
-
-  const box = document.getElementById('newsSearch');
-  if (box) box.addEventListener('input', (e) => renderDailyNews(d, e.target.value));
-  document.querySelectorAll('#eventContent .news-stock[data-code]').forEach((el) => {
+  const listEl = document.getElementById('newsList');
+  if (listEl) {
+    listEl.innerHTML = html || '<div style="padding:40px;color:var(--text-faint);text-align:center">' + (kw ? '没有匹配「' + kw + '」的新闻' : '暂无当日新闻') + '</div>';
+  }
+  document.querySelectorAll('#newsList .news-stock[data-code]').forEach((el) => {
     el.addEventListener('click', (e) => { e.stopPropagation(); openKline(el.dataset.code, 'daily'); });
   });
 }
@@ -2060,19 +2125,8 @@ function renderKline(data) {
 
   const ma = (k) => candles.map((c) => c[k]);
 
-  // 跳空缺口标记：向上跳空（今最低>昨最高）红色▲；向下跳空（今最高<昨最低）绿色▼
-  const gapPoints = [];
-  for (let i = 1; i < candles.length; i++) {
-    const prev = candles[i - 1], cur = candles[i];
-    if (cur.low > prev.high) {
-      gapPoints.push({ coord: [cur.dt, cur.low], symbol: 'triangle', symbolRotate: 0, symbolSize: 10, itemStyle: { color: C_UP } });
-    } else if (cur.high < prev.low) {
-      gapPoints.push({ coord: [cur.dt, cur.high], symbol: 'triangle', symbolRotate: 180, symbolSize: 10, itemStyle: { color: C_DOWN } });
-    }
-  }
-
   document.getElementById('modalLegend').innerHTML =
-    '<span style="color:var(--text-faint);font-size:12px">MA5/10/15/20/120/250 均线 · ▲▼ 三角标记为跳空缺口</span>';
+    '<span style="color:var(--text-faint);font-size:12px">MA5/10/15/20/120/250 均线</span>';
 
   const chart = echarts.init(document.getElementById('klineChart'), 'dark');
   state.klineChart = chart;
@@ -2112,7 +2166,6 @@ function renderKline(data) {
       {
         name: 'K线', type: 'candlestick', data: ohlc,
         itemStyle: { color: C_UP, color0: C_DOWN, borderColor: C_UP, borderColor0: C_DOWN },
-        markPoint: { data: gapPoints, label: { show: false } },
       },
       { name: 'MA5', type: 'line', data: ma('ma5'), smooth: true, showSymbol: false, lineStyle: { width: 1, color: '#f5a623' } },
       { name: 'MA10', type: 'line', data: ma('ma10'), smooth: true, showSymbol: false, lineStyle: { width: 1, color: '#4c8dff' } },
