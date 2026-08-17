@@ -1420,29 +1420,85 @@ function renderEventData(tab, sub, data) {
   }
 }
 
+// 涨停/跌停排序状态（除代码/名称/原因外全字段可排）
+let btSortKey = null, btSortDesc = true;
+
 function renderBoard(kind, d) {
-  document.getElementById('eventStats').innerHTML = `<b>${d.date}</b> · 共 <b>${d.count}</b> 只`;
+  document.getElementById('eventStats').innerHTML =
+    `<b>${d.date}</b> · 共 <b>${d.count}</b> 只（点击列头排序，除代码/名称/原因外均可）`;
+  renderBoardTable(kind, d);
+}
+
+function renderBoardTable(kind, d) {
   const isUp = kind === 'zt';
   const hasLimitCount = isUp;
-  const rows = (d.stocks || []).map((s) => {
+  const stocks = [...(d.stocks || [])];
+  // 排序字段映射：数值→数值，时间→字符串（HH:MM:SS 字符串序=时间序），文本→拼音
+  const fieldMap = {
+    market_zh: (s) => s.market_zh || '',
+    change_pct: (s) => s.change_pct,
+    first_time: (s) => s.first_time || '',
+    last_time: (s) => s.last_time || '',
+    boards: (s) => s.boards || 0,
+    break_count: (s) => s.break_count || 0,
+    fund: (s) => s.fund || 0,
+    amount: (s) => s.amount || 0,
+    seal_ratio: (s) => (s.fund != null && s.amount) ? s.fund / s.amount : 0,
+    turnover: (s) => s.turnover || 0,
+    limit_1y: (s) => (s.limit_1y == null ? -1 : s.limit_1y),
+    limit_6m: (s) => (s.limit_6m == null ? -1 : s.limit_6m),
+    limit_1m: (s) => (s.limit_1m == null ? -1 : s.limit_1m),
+    industry: (s) => s.industry || '',
+  };
+  if (btSortKey && fieldMap[btSortKey]) {
+    const f = fieldMap[btSortKey];
+    stocks.sort((a, b) => {
+      const va = f(a), vb = f(b);
+      if (typeof va === 'number' && typeof vb === 'number') {
+        return btSortDesc ? vb - va : va - vb;
+      }
+      const sa = String(va), sb = String(vb);
+      return btSortDesc ? sb.localeCompare(sa, 'zh') : sa.localeCompare(sb, 'zh');
+    });
+  }
+  const arrow = (k) => (btSortKey === k ? (btSortDesc ? ' ▾' : ' ▴') : '');
+  const th = (k, zh) => `<th class="lhb-sortable" data-key="${k}">${zh}${arrow(k)}</th>`;
+
+  const rows = stocks.map((s) => {
     const reason = s.reason ? `<td class="reason-cell">${s.reason}</td>` : '<td style="color:var(--text-faint)">—</td>';
     const boardTag = s.boards >= 2 ? `<span class="tag tag-up">${s.boards}连板</span>` : (s.boards === 1 ? '首板' : '—');
     const breakTag = s.break_count > 0 ? `<span style="color:var(--resonance)">${s.break_count}次</span>` : '0';
     const limitCols = hasLimitCount ? `<td>${s.limit_1y ?? '—'}</td><td>${s.limit_6m ?? '—'}</td><td>${s.limit_1m ?? '—'}</td>` : '';
+    const sealRatio = (s.fund != null && s.amount) ? (s.fund / s.amount).toFixed(2) : '—';
     const chgCls = isUp ? 'num-up' : 'num-down';
     const chgSign = isUp ? '+' : '';
     return `<tr class="clickable" data-code="${s.code}">
       <td class="cell-code">${s.code}</td><td>${s.name}</td><td>${s.market_zh}</td>
-      <td class="${chgCls}">${chgSign}${s.change_pct}%</td><td>${s.first_time}</td><td>${boardTag}</td>
-      <td>${breakTag}</td><td>${s.fund}万</td><td>${s.turnover}%</td>${limitCols}
+      <td class="${chgCls}">${chgSign}${s.change_pct}%</td>
+      <td>${s.first_time}</td><td>${s.last_time || '—'}</td><td>${boardTag}</td>
+      <td>${breakTag}</td><td>${s.fund}万</td><td>${s.amount != null ? s.amount : '—'}</td>
+      <td>${sealRatio}</td><td>${s.turnover}%</td>${limitCols}
       <td>${s.industry || '—'}</td>${reason}</tr>`;
   }).join('');
   const limitHead = hasLimitCount ? '<th>年涨停</th><th>半年</th><th>月</th>' : '';
-  const header = `<th>代码</th><th>名称</th><th>板块</th><th>涨跌幅</th><th>${isUp ? '首次封板' : '首次跌停'}</th><th>连板</th><th>炸板次数</th><th>封单额</th><th>换手</th>${limitHead}<th>行业</th><th>涨停原因</th>`;
-  const colCount = hasLimitCount ? 14 : 11;
+  const header =
+    `<th>代码</th><th>名称</th>${th('market_zh', '板块')}${th('change_pct', '涨跌幅')}` +
+    `${th('first_time', isUp ? '首次封板' : '首次跌停')}${th('last_time', isUp ? '最后封板' : '最后跌停')}` +
+    `${th('boards', '连板')}${th('break_count', '炸板次数')}${th('fund', '封单额')}${th('amount', '成交额')}` +
+    `${th('seal_ratio', '封成比')}${th('turnover', '换手')}${limitHead}${th('industry', '行业')}<th>涨停原因</th>`;
+  const colCount = hasLimitCount ? 17 : 14;
   const empty = `<tr><td colspan="${colCount}" style="text-align:center;color:var(--text-faint);padding:40px">当日无数据</td></tr>`;
   document.getElementById('eventContent').innerHTML =
-    `<table class="event-table"><thead><tr>${header}</tr></thead><tbody>${rows || empty}</tbody></table>`;
+    `<div class="table-scroll"><table class="event-table"><thead><tr>${header}</tr></thead><tbody>${rows || empty}</tbody></table></div>`;
+  // 表头点击排序（升/降序切换）
+  document.querySelectorAll('#eventContent .lhb-sortable').forEach((thEl) => {
+    thEl.addEventListener('click', () => {
+      const k = thEl.dataset.key;
+      if (btSortKey === k) btSortDesc = !btSortDesc;
+      else { btSortKey = k; btSortDesc = true; }
+      renderBoardTable(kind, d);
+    });
+  });
   document.querySelectorAll('#eventContent tr[data-code]').forEach((tr) => {
     tr.addEventListener('click', () => openKline(tr.dataset.code, 'daily'));
   });
@@ -1493,6 +1549,7 @@ function renderLhbTable(d) {
       buy_wan: (s) => s.buy_wan,
       sell_wan: (s) => s.sell_wan,
       turnover_pct: (s) => s.turnover_pct,
+      year_count: (s) => s.year_count || 0,
     };
     const f = fieldMap[lhbSortKey] || (() => 0);
     stocks.sort((a, b) => (lhbSortDesc ? f(b) - f(a) : f(a) - f(b)));
@@ -1507,13 +1564,15 @@ function renderLhbTable(d) {
       <td>${s.close.toFixed(2)}</td>
       <td class="${netCls}">${s.net_buy_wan >= 0 ? '+' : ''}${s.net_buy_wan}万</td>
       <td>${s.buy_wan}万</td><td>${s.sell_wan}万</td><td>${s.turnover_pct}%</td>
+      <td><b>${s.year_count ?? 0}</b> 次</td>
       <td class="reason-cell">${s.reason}</td></tr>`;
   }).join('');
-  const empty = '<tr><td colspan="10" style="text-align:center;color:var(--text-faint);padding:40px">当日无数据</td></tr>';
+  const empty = '<tr><td colspan="11" style="text-align:center;color:var(--text-faint);padding:40px">当日无数据</td></tr>';
   document.getElementById('eventContent').innerHTML =
     `<table class="event-table"><thead><tr><th>代码</th><th>名称</th><th>板块</th>
       ${th('change_pct', '涨跌幅')}<th>收盘</th>
       ${th('net_buy_wan', '净买额')}${th('buy_wan', '买入')}${th('sell_wan', '卖出')}${th('turnover_pct', '换手')}
+      ${th('year_count', '年上榜')}
       <th>上榜原因</th></tr></thead><tbody>${rows || empty}</tbody></table>`;
   // 表头点击排序（升/降序切换）
   document.querySelectorAll('#eventContent .lhb-sortable').forEach((thEl) => {
@@ -1531,6 +1590,7 @@ function renderLhbTable(d) {
 
 async function openSeat(code) {
   const date = document.getElementById('eventDate').value || '';
+  state.seatCode = code;
   document.getElementById('seatTitle').textContent = `${code} · 龙虎榜详情`;
   document.getElementById('seatBody').innerHTML = '<div style="padding:20px;color:var(--text-dim)">加载中…</div>';
   document.getElementById('seatModal').classList.remove('hidden');
@@ -1549,7 +1609,8 @@ async function openSeat(code) {
       const recs = [...(h.records || [])].sort((a, b) => historyAsc ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date));
       const recRows = recs.map((r) => {
         const netCls = r.net_buy_wan >= 0 ? 'num-up' : 'num-down';
-        return `<tr><td>${r.date}</td><td class="${r.change_pct >= 0 ? 'num-up' : 'num-down'}">${r.change_pct >= 0 ? '+' : ''}${r.change_pct}%</td><td class="${netCls}">${r.net_buy_wan >= 0 ? '+' : ''}${r.net_buy_wan}万</td><td>${r.turnover_pct}%</td><td class="reason-cell">${r.reason}</td></tr>`;
+        return `<tr class="clickable hist-row" data-date="${r.date}" title="点击查看该日席位明细">
+          <td>${r.date}</td><td class="${r.change_pct >= 0 ? 'num-up' : 'num-down'}">${r.change_pct >= 0 ? '+' : ''}${r.change_pct}%</td><td class="${netCls}">${r.net_buy_wan >= 0 ? '+' : ''}${r.net_buy_wan}万</td><td>${r.turnover_pct}%</td><td class="reason-cell">${r.reason}</td></tr>`;
       }).join('');
       return recRows || '<tr><td colspan="5" style="color:var(--text-faint)">近6个月无上榜记录</td></tr>';
     };
@@ -1570,19 +1631,61 @@ async function openSeat(code) {
       </div>
       <div class="seat-section">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <h4 style="margin:0">近6个月上榜明细（${h.count} 次）</h4>
+          <h4 style="margin:0">近6个月上榜明细（${h.count} 次）· 点击某天查看当日席位</h4>
           <button class="ghost-btn" id="historySortBtn">日期${historyAsc ? '升序 ↑' : '降序 ↓'}</button>
         </div>
         <table class="seat-table"><thead><tr><th>日期</th><th>涨跌幅</th><th>净买额</th><th>换手</th><th>上榜原因</th></tr></thead><tbody id="historyBody">${renderHistory()}</tbody></table>
-      </div>`;
+      </div>
+      <div class="seat-section" id="seatDateDetail"></div>`;
     document.getElementById('historySortBtn').addEventListener('click', () => {
       historyAsc = !historyAsc;
       document.getElementById('historySortBtn').textContent = `日期${historyAsc ? '升序 ↑' : '降序 ↓'}`;
       document.getElementById('historyBody').innerHTML = renderHistory();
+      bindHistoryRows();
     });
+    bindHistoryRows();
   } catch (e) {
     document.getElementById('seatBody').innerHTML = '<div style="padding:20px;color:var(--up)">加载失败</div>';
   }
+}
+
+// 近6个月上榜明细行点击 → 加载并展示该日期的席位明细
+function bindHistoryRows() {
+  const code = state.seatCode;
+  document.querySelectorAll('#historyBody tr.hist-row').forEach((tr) => {
+    tr.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const d2 = tr.dataset.date;
+      document.querySelectorAll('#historyBody tr.hist-row').forEach((x) => x.classList.remove('hist-selected'));
+      tr.classList.add('hist-selected');
+      const detailEl = document.getElementById('seatDateDetail');
+      if (!detailEl) return;
+      detailEl.innerHTML = `<div style="padding:14px;color:var(--text-dim)">正在加载 ${d2} 席位明细…</div>`;
+      try {
+        const dd = await (await fetchTimeout(API.dragonTigerSeats(code, d2), {}, 25000)).json();
+        const seatRow2 = (s) => `<tr><td>${s.name}</td><td class="num-up">${s.buy_wan}万</td><td class="num-down">${s.sell_wan}万</td><td>${s.net_wan}万</td></tr>`;
+        const inst2 = dd.institution || {};
+        detailEl.innerHTML = `
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+            <h4 style="margin:0">📅 ${d2} 席位明细</h4>
+            <span class="inst-card" style="padding:6px 12px">
+              机构净买入：<b class="${inst2.net_wan >= 0 ? 'num-up' : 'num-down'}">${inst2.net_wan >= 0 ? '+' : ''}${inst2.net_wan}万</b>
+              买入 ${inst2.buy_wan}万 ／ 卖出 ${inst2.sell_wan}万
+            </span>
+          </div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap">
+            <div style="flex:1;min-width:280px"><h5>买入席位 TOP5</h5>
+              <table class="seat-table"><thead><tr><th>营业部</th><th>买入</th><th>卖出</th><th>净额</th></tr></thead><tbody>${(dd.buy_seats || []).map(seatRow2).join('') || '<tr><td colspan="4" style="color:var(--text-faint)">无数据</td></tr>'}</tbody></table>
+            </div>
+            <div style="flex:1;min-width:280px"><h5>卖出席位 TOP5</h5>
+              <table class="seat-table"><thead><tr><th>营业部</th><th>买入</th><th>卖出</th><th>净额</th></tr></thead><tbody>${(dd.sell_seats || []).map(seatRow2).join('') || '<tr><td colspan="4" style="color:var(--text-faint)">无数据</td></tr>'}</tbody></table>
+            </div>
+          </div>`;
+      } catch (e2) {
+        detailEl.innerHTML = `<div style="padding:14px;color:var(--down)">${d2} 明细加载失败，请稍后重试</div>`;
+      }
+    });
+  });
 }
 
 // ===================== 个股研报 =====================

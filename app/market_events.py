@@ -330,7 +330,33 @@ def get_dragon_tiger(date_dashed: str = None) -> dict:
             "turnover_pct": round(float(row.get("TURNOVERRATE") or 0), 2),
             "market_zh": _market_zh(code),
         })
+    # 年上榜次数：一次批量查询近一年全部上榜记录，本地统计各股出现次数
+    try:
+        counts = _count_year_listings()
+        for s in stocks:
+            s["year_count"] = counts.get(s["code"], 0)
+    except Exception:
+        for s in stocks:
+            s["year_count"] = 0
     return {"date": actual_date, "count": len(stocks), "stocks": stocks}
+
+
+def _count_year_listings() -> dict:
+    """统计近一年每只股票上榜次数（一次查询，避免逐股请求）。"""
+    from datetime import date as _date
+    start = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+    end = datetime.now().strftime("%Y-%m-%d")
+    data = _em_datacenter(
+        "RPT_DAILYBILLBOARD_DETAILSNEW",
+        filter_str=f"(TRADE_DATE>='{start}')(TRADE_DATE<='{end}')",
+        page_size=2000,
+    )
+    from collections import Counter
+    cnt: Counter = Counter()
+    for row in data:
+        c = str(row.get("SECURITY_CODE", "")).zfill(6)
+        cnt[c] += 1
+    return dict(cnt)
 
 
 def get_dragon_tiger_seats(code: str, date_dashed: str = None) -> dict:

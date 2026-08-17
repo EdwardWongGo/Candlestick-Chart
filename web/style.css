@@ -262,6 +262,15 @@ body {
 .lhb-sortable:hover { color: var(--accent); }
 .lhb-sortable.sorted { color: var(--accent); }
 
+/* ===== 涨停/跌停宽表横向滚动 ===== */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.table-scroll .event-table { min-width: 1080px; }
+
+/* ===== 龙虎榜历史明细行（可点击查看当日席位） ===== */
+.hist-row { cursor: pointer; }
+.hist-row:hover { background: rgba(59, 130, 246, .1); }
+.hist-selected { background: rgba(59, 130, 246, .18) !important; }
+
 /* ===== 每日新闻关键字搜索 ===== */
 .news-search-bar { padding: 10px 20px; background: var(--bg-panel); border-bottom: 1px solid var(--border); }
 .news-search-bar input {
