@@ -73,27 +73,33 @@ def get_sync_status() -> dict:
 def sync_incremental(codes: List[str], timeframes: List[str],
                      progress_cb: Optional[Callable[[int, int, str], None]] = None,
                      cancel_cb: Optional[Callable[[], bool]] = None,
-                     server: Optional[list] = None) -> dict:
+                     server: Optional[list] = None,
+                     source_kind: Optional[str] = None) -> dict:
     """把给定股票池的最新 K 线增量同步到本地缓存（多线程并发拉取）。
 
-    codes:      股票代码列表
-    timeframes: 需要同步的级别（daily/weekly/monthly）
+    codes:       股票代码列表
+    timeframes:  需要同步的级别（daily/weekly/monthly）
     progress_cb: 进度回调 (done, total, msg)
-    cancel_cb:  取消回调，返回 True 时中断（返回 cancelled=True，不抛异常）
-    server:     自定义服务器 [(host, port), ...]，None=自动选最快
+    cancel_cb:   取消回调，返回 True 时中断（返回 cancelled=True，不抛异常）
+    server:      自定义通达信服务器 [(host, port), ...]，None=自动选最快
+    source_kind: 数据源预设键名（tdx_public/tencent_public/sina_public/custom…），
+                 None=使用 config.DEFAULT_SERVER_PRESET
 
-    返回 {synced, failed, elapsed, last_sync, cancelled}
+    返回 {synced, failed, empty, elapsed, last_sync, cancelled}
+      synced: 实际写入新数据的任务数
+      failed: 拉取异常的任务数
+      empty:  数据源无返回（未写入）的任务数
     """
-    source = get_source(server=server) if server else get_source()
+    source = get_source(kind=source_kind, server=server) if server else get_source(kind=source_kind)
     cache = KlineCache()
     t0 = time.time()
 
     total = len(codes) * len(timeframes)
     lock = threading.Lock()
-    state = {"done": 0, "synced": 0, "failed": 0, "cancelled": False}
+    state = {"done": 0, "synced": 0, "failed": 0, "empty": 0, "cancelled": False}
 
     def _task(item):
-        """单个 (code, tf) 的同步任务。返回 synced/skip/failed。"""
+        """单个 (code, tf) 的同步任务。返回 synced/skip/empty/failed。"""
         if state["cancelled"] or (cancel_cb and cancel_cb()):
             state["cancelled"] = True
             return None
@@ -113,6 +119,7 @@ def sync_incremental(codes: List[str], timeframes: List[str],
                 if bars:
                     cache.set(code, tf, bars[-config.MIN_BARS.get(tf, 120):])
                     return "synced"
+                return "empty"   # 数据源无返回（区别于“已最新”的 skip）
             return "skip"
         except Exception:
             return "failed"
@@ -126,6 +133,8 @@ def sync_incremental(codes: List[str], timeframes: List[str],
                     state["synced"] += 1
                 elif result == "failed":
                     state["failed"] += 1
+                elif result == "empty":
+                    state["empty"] += 1
                 done = state["done"]
             if progress_cb:
                 progress_cb(done, total, f"同步 {item[0]} {item[1]}")
@@ -135,11 +144,12 @@ def sync_incremental(codes: List[str], timeframes: List[str],
     last_sync = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     if not state["cancelled"]:
         _save_meta({"last_sync": last_sync, "synced_count": state["synced"],
-                    "failed": state["failed"]})
+                    "failed": state["failed"], "empty": state["empty"]})
 
     return {
         "synced": state["synced"],
         "failed": state["failed"],
+        "empty": state["empty"],
         "elapsed": round(time.time() - t0, 2),
         "last_sync": last_sync,
         "cancelled": state["cancelled"],

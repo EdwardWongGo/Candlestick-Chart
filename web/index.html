@@ -54,8 +54,12 @@
         <!-- 服务器 -->
         <div id="srcServer" class="src-panel hidden">
           <div class="src-row">
-            <input id="serverAddr" class="src-input" placeholder="服务器地址（留空=默认）" list="serverHistory" autocomplete="off">
-            <datalist id="serverHistory"></datalist>
+            <span class="src-hint">数据服务器：</span>
+            <select id="serverPreset" class="src-select src-input"></select>
+          </div>
+          <div class="src-hint" id="serverPresetDesc"></div>
+          <div class="src-row hidden" id="serverAddrRow">
+            <input id="serverAddr" class="src-input" placeholder="自定义服务器地址，如 192.168.1.10:7709" autocomplete="off">
           </div>
           <div class="src-row src-row-center">
             <span class="src-hint">同步级别：</span>

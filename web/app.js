@@ -592,6 +592,28 @@ async function initSyncStatus() {
 // ===================== 数据来源选择器（本地 / 服务器 / 上传） =====================
 function initDataSource() {
   refreshLocalStatus();   // 刷新上次同步时间 + 缓存空检测
+  renderServerPresets();  // 渲染「数据服务器」下拉（来源/场景说明）
+}
+
+function renderServerPresets() {
+  const sel = document.getElementById('serverPreset');
+  const presets = (state.meta && state.meta.server_presets) || [];
+  if (!sel || !presets.length) return;
+  sel.innerHTML = presets.map((p) => `<option value="${p.key}">${p.zh}</option>`).join('');
+  const def = (state.meta && state.meta.default_server_preset) || (presets[0] && presets[0].key);
+  sel.value = def || presets[0].key;
+  sel.addEventListener('change', onServerPresetChange);
+  onServerPresetChange();   // 立即刷新说明与自定义地址行
+}
+
+function onServerPresetChange() {
+  const sel = document.getElementById('serverPreset');
+  const presets = (state.meta && state.meta.server_presets) || [];
+  const cur = presets.find((p) => p.key === sel.value);
+  const descEl = document.getElementById('serverPresetDesc');
+  const addrRow = document.getElementById('serverAddrRow');
+  if (descEl) descEl.textContent = cur ? `来源：${cur.source}。${cur.desc}` : '';
+  if (addrRow) addrRow.classList.toggle('hidden', !(cur && cur.kind === 'custom'));
 }
 
 async function refreshLocalStatus() {
@@ -622,14 +644,10 @@ function onDataSourceChange() {
 
 async function onServerConnect() {
   if (state.serverSyncing) return;
+  // 数据服务器：预设键名；自定义选项填了地址则提交地址（host:port）
+  const preset = document.getElementById('serverPreset').value;
   const addr = document.getElementById('serverAddr').value.trim();
-  // 记录服务器地址历史（供 datalist 选择）
-  if (addr && !state.serverHistory.includes(addr)) {
-    state.serverHistory.unshift(addr);
-    state.serverHistory = state.serverHistory.slice(0, 8);
-    document.getElementById('serverHistory').innerHTML =
-      state.serverHistory.map((a) => `<option value="${a}"></option>`).join('');
-  }
+  const server = (preset === 'custom' && addr) ? addr : preset;
   state.serverSyncing = true;
   const statusEl = document.getElementById('serverStatus');
   const progressEl = document.getElementById('serverProgress');
@@ -652,15 +670,27 @@ async function onServerConnect() {
     const r = await fetch(API.sync, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ server: addr || null, timeframes }),
+      body: JSON.stringify({ server, timeframes }),
     });
     const d = await r.json();
     if (d.error) {
-      statusEl.textContent = `❌ 连接失败：${d.error}`;
+      statusEl.textContent = `❌ 同步失败：${d.error}`;
       statusEl.className = 'src-status src-fail';
     } else {
-      statusEl.textContent = `✅ 连接成功，同步 ${d.synced ?? 0} 项，请点击「开始筛选」`;
-      statusEl.className = 'src-status src-ok';
+      const { synced = 0, failed = 0, empty = 0 } = d;
+      if (synced > 0) {
+        statusEl.textContent = `✅ 同步完成：${synced} 项写入本地，请点击「开始筛选」`;
+        statusEl.className = 'src-status src-ok';
+      } else if (empty > 0) {
+        statusEl.textContent = `⚠️ 同步完成，但 ${empty} 项未获取到数据（数据源无返回）。可切换「数据服务器」后重试`;
+        statusEl.className = 'src-status src-fail';
+      } else if (failed > 0) {
+        statusEl.textContent = `⚠️ 同步完成：${failed} 项失败`;
+        statusEl.className = 'src-status src-fail';
+      } else {
+        statusEl.textContent = 'ℹ️ 本地数据已是最新，无需更新';
+        statusEl.className = 'src-status src-ok';
+      }
       // 同步完成后刷新同步时间，筛选由用户点击「开始筛选」触发
       await refreshLocalStatus();
     }

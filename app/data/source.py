@@ -222,16 +222,25 @@ class TencentQuoteSource(DataSource):
 # 腾讯 K 线数据源（兜底）
 # ---------------------------------------------------------------------------
 class TencentKlineSource(DataSource):
-    """腾讯 HTTP K 线数据源（兜底）。
+    """腾讯财经 HTTP K 线数据源（统一兜底源）。
 
     通达信 K 线接口（tdxpy get_security_bars）在部分服务端会被拒绝（仅返回
     2 字节异常体），此时用腾讯公开 K 线接口兜底，保证日/周/月线可用。
+
+    多域名容错：主域名 web.ifzq.gtimg.cn 对部分出口 IP（如机房/数据中心）
+    会被 WAF 拦截，故先尝试备用域名 proxy.finance.qq.com（同接口）。
     """
 
     name = "tencent_kline"
 
     # 时间级别 → 腾讯 period
     _PERIOD = {"daily": "day", "weekly": "week", "monthly": "month"}
+    # (域名, 路径)：备用域名 proxy.finance.qq.com 需带 /ifzqgtimg 前缀；
+    # 主域名 web.ifzq.gtimg.cn 路径不同，作为第二候选。
+    _HOSTS = (
+        ("proxy.finance.qq.com", "/ifzqgtimg/appstock/app/fqkline/get"),
+        ("web.ifzq.gtimg.cn", "/appstock/app/fqkline/get"),
+    )
     _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36")
 
@@ -246,30 +255,91 @@ class TencentKlineSource(DataSource):
         period = self._PERIOD.get(timeframe, "day")
         symbol = self._symbol(code)
         param = f"{symbol},{period},,,{count},qfq"
+        candles: List[Candle] = []
+        for host, path in self._HOSTS:
+            try:
+                r = requests.get(
+                    f"https://{host}{path}",
+                    params={"param": param},
+                    headers={"User-Agent": self._UA,
+                             "Referer": "https://gu.qq.com/"},
+                    timeout=10,
+                )
+                data = (r.json().get("data") or {}).get(symbol) or {}
+                klines = data.get("qfq" + period) or data.get(period) or []
+            except Exception:
+                continue  # 该域名失败，尝试下一个
+
+            for row in klines:
+                if not isinstance(row, (list, tuple)) or len(row) < 6:
+                    continue
+                try:
+                    dt = str(row[0])
+                    o = float(row[1]); c = float(row[2])
+                    h = float(row[3]); l = float(row[4])
+                    v = float(row[5])
+                except (ValueError, IndexError):
+                    continue
+                candles.append(Candle(dt=dt, open=o, high=h, low=l, close=c, volume=v))
+            if candles:
+                break
+        # klines 已按时间升序，只取最近 count 根
+        return candles[-count:] if candles else []
+
+
+class SinaKlineSource(DataSource):
+    """新浪财经 HTTP K 线数据源（备用节点，日线/周线）。
+
+    月线新浪无公开周期接口，返回空并由上层回退到腾讯财经源。
+    """
+
+    name = "sina_kline"
+
+    # 时间级别 → 新浪 scale（240=日线, 1200=周线）
+    _SCALE = {"daily": "240", "weekly": "1200"}
+    _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+           "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36")
+
+    @staticmethod
+    def _symbol(code: str) -> str:
+        c = str(code).zfill(6)
+        prefix = "sh" if c.startswith(("6", "9")) else "sz"
+        return prefix + c
+
+    def get_bars(self, code: str, timeframe: str, count: int) -> List[Candle]:
+        import re
+        import requests
+        scale = self._SCALE.get(timeframe)
+        if not scale:
+            return []  # 月线不支持，交给上层回退
+        symbol = self._symbol(code)
+        url = ("https://quotes.sina.cn/cn/api/jsonp_v2.php/"
+               f"var%20_{symbol}=/CN_MarketDataService.getKLineData"
+               f"?symbol={symbol}&scale={scale}&ma=no&datalen={count}")
         try:
-            r = requests.get(
-                "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
-                params={"param": param},
-                headers={"User-Agent": self._UA}, timeout=10,
-            )
-            data = (r.json().get("data") or {}).get(symbol) or {}
-            klines = data.get("qfq" + period) or []
+            r = requests.get(url, headers={"User-Agent": self._UA},
+                             timeout=10)
+            m = re.search(r"\[(.*)\]", r.text, re.S)
+            rows = json.loads("[" + m.group(1) + "]") if m else []
         except Exception:
             return []
-
         candles: List[Candle] = []
-        for row in klines:
-            if not isinstance(row, (list, tuple)) or len(row) < 6:
+        for row in rows:
+            if not isinstance(row, dict):
                 continue
             try:
-                dt = str(row[0])
-                o = float(row[1]); c = float(row[2])
-                h = float(row[3]); l = float(row[4])
-                v = float(row[5])
-            except (ValueError, IndexError):
+                candles.append(Candle(
+                    dt=str(row["day"])[:10],
+                    open=float(row["open"]), high=float(row["high"]),
+                    low=float(row["low"]), close=float(row["close"]),
+                    volume=float(row.get("volume", 0) or 0),
+                ))
+            except (ValueError, KeyError, TypeError):
                 continue
-            candles.append(Candle(dt=dt, open=o, high=h, low=l, close=c, volume=v))
-        # klines 已按时间升序，只取最近 count 根
+        # 新浪按时间升序返回，只取最近 count 根
+        if not candles:
+            # 备用节点无数据（或月线不支持）→ 回退腾讯财经兜底源
+            return get_fallback_source().get_bars(code, timeframe, count)
         return candles[-count:] if candles else []
 
 
@@ -295,28 +365,41 @@ def _fmt_dt(dt) -> Optional[str]:
     return s[:10]
 
 
-# 单例缓存
-_SOURCE = None
+# 单例缓存（按数据源 kind 分别缓存，便于切换数据服务器预设）
+_SOURCES: dict = {}
 _FALLBACK_SOURCE = None
 
 
 def get_fallback_source() -> TencentKlineSource:
-    """获取腾讯 K 线兜底数据源单例。"""
+    """获取腾讯 K 线兜底数据源单例（统一最终兜底源）。"""
     global _FALLBACK_SOURCE
     if _FALLBACK_SOURCE is None:
         _FALLBACK_SOURCE = TencentKlineSource()
     return _FALLBACK_SOURCE
 
 
+def _resolve_source(kind: Optional[str]) -> DataSource:
+    """按预设 kind 构造数据源。kind 未知名时回退通达信。"""
+    k = (kind or config.DEFAULT_SERVER_PRESET).lower()
+    if k in ("tencent", "tencent_public", "tencent_kline"):
+        return TencentKlineSource()
+    if k in ("sina", "sina_public", "sina_kline"):
+        return SinaKlineSource()
+    # tdx / tdx_public / mootdx / 其它未知 → 通达信（内部空时自动回退腾讯）
+    return MootdxSource()
+
+
 def get_source(kind: str = None, server: Optional[list] = None) -> DataSource:
-    """获取数据源单例。server 为自定义服务器 [(host, port), ...]，None=自动选最快。"""
-    global _SOURCE
+    """获取数据源。server 为自定义通达信服务器 [(host, port), ...]；kind 为预设键名。
+
+    自定义服务器不缓存（每次新建）；预设源按 kind 缓存单例，切换预设后生效。
+    """
     if server is not None:
-        return MootdxSource(server=server)   # 自定义服务器：不缓存单例，每次新建
-    if _SOURCE is None:
-        kind = kind or config.DATA_SOURCE
-        _SOURCE = MootdxSource() if kind == "mootdx" else MootdxSource()
-    return _SOURCE
+        return MootdxSource(server=server)
+    kind = (kind or config.DEFAULT_SERVER_PRESET).lower()
+    if kind not in _SOURCES:
+        _SOURCES[kind] = _resolve_source(kind)
+    return _SOURCES[kind]
 
 
 def get_mootdx_client():

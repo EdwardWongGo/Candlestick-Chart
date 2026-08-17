@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>使用说明 —— A股蜡烛图形态筛选工具</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+    margin: 0; padding: 0; background: #f4f6f9; color: #2b3440;
+    line-height: 1.7;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 24px 16px 60px; }
+  header {
+    background: linear-gradient(135deg, #1f2d4a, #2b4a7a);
+    color: #fff; border-radius: 12px; padding: 26px 28px; margin-bottom: 22px;
+  }
+  header h1 { margin: 0 0 8px; font-size: 24px; }
+  header p { margin: 0; opacity: .88; font-size: 14px; }
+  .card {
+    background: #fff; border: 1px solid #e3e8ef; border-radius: 10px;
+    padding: 18px 22px; margin-bottom: 16px;
+  }
+  .card h2 {
+    margin: 0 0 10px; font-size: 17px; color: #1f2d4a;
+    border-left: 4px solid #3b82f6; padding-left: 10px;
+  }
+  ol.steps { padding-left: 22px; }
+  ol.steps li { margin-bottom: 10px; }
+  code, .box {
+    background: #eef2f8; border: 1px solid #d8e0ec; border-radius: 6px;
+    padding: 2px 7px; font-size: 13px; color: #2b4a7a;
+  }
+  .box { display: block; padding: 10px 12px; margin: 8px 0; white-space: pre-wrap; }
+  table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 14px; }
+  th, td { border: 1px solid #e3e8ef; padding: 8px 10px; text-align: left; }
+  th { background: #f0f4fa; }
+  .tip { background: #fff8e6; border: 1px solid #f2dfa0; border-radius: 8px; padding: 10px 14px; font-size: 13px; margin: 10px 0; }
+  .warn { background: #fdeeee; border: 1px solid #f3c2c2; border-radius: 8px; padding: 10px 14px; font-size: 13px; margin: 10px 0; }
+  details { border: 1px solid #e3e8ef; border-radius: 8px; padding: 10px 14px; margin-bottom: 10px; background: #fafbfd; }
+  summary { cursor: pointer; font-weight: 600; color: #1f2d4a; }
+  .foot { text-align: center; color: #8b96a8; font-size: 12px; margin-top: 28px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>📊 A股蜡烛图形态筛选工具 · 使用说明</h1>
+  <p>照着下面的步骤做，任何人都能把这个工具跑起来。不需要懂编程。</p>
+</header>
+
+<!-- ========== 环境准备 ========== -->
+<div class="card">
+  <h2>一、环境准备（先确认这些）</h2>
+  <ol class="steps">
+    <li><b>一台能上网的 Windows 电脑</b>（Win10 / Win11 均可）。</li>
+    <li><b>已安装 Python 3.10 或更高版本</b>：
+      <br>打开命令行（按 Win+R，输入 <code>cmd</code> 回车），输入 <code>python --version</code>，
+      <br>如果显示 <code>Python 3.x.x</code> 就说明已安装；如果提示「不是内部或外部命令」，请先到
+      <b>python.org/downloads</b> 下载安装（安装时勾选 <b>Add Python to PATH</b>）。
+    </li>
+    <li><b>已安装程序需要的依赖包</b>（只需第一次做一次）：
+      <div class="box">cd 项目目录
+pip install -r requirements.txt</div>
+      如果出现 <code>Requirement already satisfied</code> 也属于正常，说明之前装过。
+    </li>
+  </ol>
+  <div class="tip">💡 什么是「项目目录」？就是本说明所在的那个文件夹。进入文件夹后，在地址栏输入 <code>cmd</code> 回车，可以直接打开命令行并定位到该目录。</div>
+</div>
+
+<!-- ========== 启动 ========== -->
+<div class="card">
+  <h2>二、启动程序（3 步）</h2>
+  <ol class="steps">
+    <li>进入项目目录，双击 <b>启动筛选工具.bat</b>（或打开命令行运行 <code>python run.py</code>）。</li>
+    <li>稍等 1~3 秒，浏览器会自动打开工具页面（网址 <code>http://127.0.0.1:8000</code>）。
+      <br>如果浏览器没有自动打开，请手动在浏览器地址栏输入 <code>http://127.0.0.1:8000</code> 回车。</li>
+    <li>看到「数据来源」「开始筛选」等界面即启动成功。</li>
+  </ol>
+  <div class="tip">💡 启动后会出现一个黑色命令行窗口，<b>不要关闭它</b>——关闭窗口程序就会退出。</div>
+  <div class="warn">⚠️ 若双击 .bat 一闪而过 / 报错，请看下方「常见问题」第 1、2 条。</div>
+</div>
+
+<!-- ========== 同步数据 ========== -->
+<div class="card">
+  <h2>三、同步数据（让工具有行情数据可用）</h2>
+  <p>工具默认会同步 <b>日线 / 周线 / 月线</b> 三个时间维度的全市场数据到本机。操作如下：</p>
+  <ol class="steps">
+    <li>在页面左侧「数据来源」里选择 <b>🌐 服务器</b>。</li>
+    <li>选择「数据服务器」（下拉框，说明已标注数据出处与适用场景）：
+      <table>
+        <tr><th>选项</th><th>数据出处</th><th>什么时候用</th></tr>
+        <tr><td>通达信公开行情 · 生产主用</td><td>通达信官方行情网络（公网）</td><td>默认首选，绝大多数网络可用</td></tr>
+        <tr><td>腾讯财经 K 线 · 生产兜底</td><td>腾讯财经公开接口</td><td>通达信连不上 / 被拒绝时自动兜底</td></tr>
+        <tr><td>新浪财经 K 线 · 备用节点</td><td>新浪财经公开接口</td><td>备用，日线/周线可用</td></tr>
+        <tr><td>自定义服务器 · 内网/专线</td><td>你自己填的地址（主机:端口）</td><td>公司内网或专线行情源</td></tr>
+      </table>
+    </li>
+    <li>「同步级别」默认勾选 <b>日线 / 周线 / 月线</b>（可按需取消勾选）。</li>
+    <li>点击 <b>🔌 连接</b>，等待进度条走完（全市场约需数分钟，属正常）。</li>
+    <li>看到「✅ 同步完成：N 项写入本地」即可开始筛选。</li>
+  </ol>
+  <div class="tip">💡 同步就是把服务器上的 K 线下载到本机 <code>data/</code> 文件夹，之后筛选不用联网、速度快。同步失败或提示「未获取到数据」时，换一个「数据服务器」再试即可。</div>
+</div>
+
+<!-- ========== 开始筛选 ========== -->
+<div class="card">
+  <h2>四、开始筛选</h2>
+  <ol class="steps">
+    <li>在「时间级别」勾选要筛选的级别（日线 / 周线 / 月线，可多选）。</li>
+    <li>在「形态」中选择要识别的蜡烛图形态（默认全选）。</li>
+    <li>按需设置附加条件：涨跌幅、放量倍数、价格区间、只看年线上方、是否包含 ST 等。</li>
+    <li>点击 <b>开始筛选</b>，等待进度条完成，结果表会列出命中的股票。</li>
+    <li>点结果行可查看 K 线图（形态位置高亮）；点「导出 CSV」可导出到 Excel。</li>
+  </ol>
+</div>
+
+<!-- ========== 常见问题 ========== -->
+<div class="card">
+  <h2>五、常见问题排查</h2>
+
+  <details open>
+    <summary>1. 双击启动文件一闪而过 / 打不开？</summary>
+    说明依赖没装好。按「一、环境准备」第 3 步执行 <code>pip install -r requirements.txt</code> 后重试。
+    还不行的话，打开命令行运行 <code>python run.py</code>，把红色报错信息截图发给维护者。
+  </details>
+
+  <details>
+    <summary>2. 提示「端口被占用」或页面打不开？</summary>
+    说明 8000 端口被其他程序占用。改用其它端口启动：命令行运行
+    <code>python run.py --port 8001</code>，然后浏览器访问 <code>http://127.0.0.1:8001</code>。
+  </details>
+
+  <details>
+    <summary>3. 同步后只有「日线」文件夹，没有周线/月线？</summary>
+    同步级别没勾全。回到「三、同步数据」第 3 步，勾上 <b>周线</b> 和 <b>月线</b>，再点一次「连接」。
+  </details>
+
+  <details>
+    <summary>4. 提示「同步完成，但 N 项未获取到数据（数据源无返回）」？</summary>
+    当前选的数据服务器暂时拿不到数据。在「数据服务器」下拉换一个选项（例如换成「腾讯财经 K 线」）再同步一次。
+  </details>
+
+  <details>
+    <summary>5. 涨停板 / 龙虎榜 / 题材热点是空的？</summary>
+    这些数据在交易日<b>盘后</b>才发布。盘中或周末查询当天数据为空属正常；程序会自动取最近一个已收盘交易日的数据。稍后再试即可。
+  </details>
+
+  <details>
+    <summary>6. 数据不是最新的？</summary>
+    数据只更新到最近一次同步的时刻。重新点「🔌 连接」即可增量更新（只下载新增部分，很快）。
+  </details>
+
+  <details>
+    <summary>7. 某些股票没有数据？</summary>
+    停牌股没有新 K 线，会被跳过（正常）；新股历史太短、K 线根数不够，也算不了形态（正常）。
+  </details>
+
+  <details>
+    <summary>8. 怎么停止程序？</summary>
+    关闭启动时出现的黑色命令行窗口即可。或在命令行按 <code>Ctrl+C</code>。
+  </details>
+</div>
+
+<!-- ========== 数据位置 ========== -->
+<div class="card">
+  <h2>六、数据存在哪里</h2>
+  <table>
+    <tr><th>内容</th><th>位置</th></tr>
+    <tr><td>日线 K 线</td><td>项目目录 <code>data/daily/</code>（每个股票一个 CSV）</td></tr>
+    <tr><td>周线 K 线</td><td>项目目录 <code>data/weekly/</code></td></tr>
+    <tr><td>月线 K 线</td><td>项目目录 <code>data/monthly/</code></td></tr>
+    <tr><td>股票池、同步时间记录</td><td>项目目录 <code>data/</code> 下</td></tr>
+  </table>
+  <div class="tip">💡 备份数据 = 复制 <code>data/</code> 文件夹；清空重来 = 删除 <code>data/</code> 文件夹后重新同步。</div>
+</div>
+
+<div class="foot">本工具数据来自公开行情源（通达信 / 腾讯财经 / 新浪财经），仅供学习研究，不构成投资建议。</div>
+
+</div>
+</body>
+</html>

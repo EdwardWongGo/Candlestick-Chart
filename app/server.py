@@ -86,6 +86,13 @@ def meta():
         "markets": markets,
         "ma250_period": config.MA250_PERIOD,
         "resonance_min_levels": config.RESONANCE_MIN_LEVELS,
+        "server_presets": [
+            {"key": p["key"], "zh": p["zh"], "source": p["source"],
+             "desc": p["desc"], "kind": p["kind"]}
+            for p in config.SERVER_PRESETS
+        ],
+        "default_server_preset": config.DEFAULT_SERVER_PRESET,
+        "sync_timeframes": config.SYNC_TIMEFRAMES,
     })
 
 
@@ -264,21 +271,33 @@ def sync_status():
 
 @app.route("/api/sync", methods=["POST"])
 def sync_now():
-    """手动触发一次数据同步（默认同步本地全市场股票池，可指定服务器地址）。
-    时间级别默认取 config.SYNC_TIMEFRAMES（日/周/月三级别），可由请求体覆盖。"""
+    """手动触发一次数据同步（默认同步本地全市场股票池，可指定数据服务器）。
+    时间级别默认取 config.SYNC_TIMEFRAMES（日/周/月三级别），可由请求体覆盖。
+
+    body.server 取值：
+      - 数据服务器预设键名（如 tdx_public / tencent_public / sina_public）
+      - 自定义地址 "host:port"（通达信内网/专线行情源）
+      - 空 → 使用 config.DEFAULT_SERVER_PRESET
+    """
     body = request.get_json(silent=True) or {}
     codes = body.get("codes") or None
     timeframes = body.get("timeframes") or config.SYNC_TIMEFRAMES
-    server = body.get("server")   # 可选服务器地址，形如 "host:port"
+    server_sel = body.get("server")
 
-    # 解析服务器地址为 [(host, port)]，供 mootdx 使用；解析失败则用默认
+    # 解析数据服务器：预设键名 → source_kind；"host:port" → 自定义通达信
+    source_kind = None
     custom_server = None
-    if server:
-        try:
-            host, port = str(server).rsplit(":", 1)
-            custom_server = [(host.strip(), int(port))]
-        except Exception:
-            custom_server = None
+    if server_sel:
+        preset = next((p for p in config.SERVER_PRESETS if p["key"] == server_sel), None)
+        if preset and preset["kind"] != "custom":
+            source_kind = preset["kind"]
+        elif ":" in str(server_sel):
+            try:
+                host, port = str(server_sel).rsplit(":", 1)
+                custom_server = [(host.strip(), int(port))]
+            except Exception:
+                custom_server = None
+        # custom 预设未带地址时回退默认源
 
     if codes:
         from .data.universe import Universe
@@ -290,16 +309,17 @@ def sync_now():
             codes = load_universe().codes
         except Exception as e:
             return jsonify({
-                "error": f"获取股票池失败（请确认网络可访问通达信行情服务器）：{e}",
-                "synced": 0, "failed": 0,
+                "error": f"获取股票池失败（请确认网络可访问行情服务器）：{e}",
+                "synced": 0, "failed": 0, "empty": 0,
             }), 500
     if not codes:
-        return jsonify({"error": "股票池为空，无法同步", "synced": 0, "failed": 0}), 400
+        return jsonify({"error": "股票池为空，无法同步", "synced": 0, "failed": 0, "empty": 0}), 400
     try:
-        result = sync_incremental(codes, timeframes, server=custom_server)
+        result = sync_incremental(codes, timeframes,
+                                  server=custom_server, source_kind=source_kind)
         return jsonify(result)
     except Exception as e:
-        return jsonify({"error": f"同步失败：{e}", "synced": 0, "failed": 0}), 500
+        return jsonify({"error": f"同步失败：{e}", "synced": 0, "failed": 0, "empty": 0}), 500
 
 
 # ---------------------------------------------------------------------------
