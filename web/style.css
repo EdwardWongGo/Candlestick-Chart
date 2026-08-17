@@ -52,6 +52,30 @@ body {
 
 /* ===== 市场事件面板 ===== */
 .event-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+/* ===== 个股研报面板 ===== */
+.report-toolbar { display: flex; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--bg-panel); }
+.report-input {
+  flex: 0 0 260px; padding: 10px 12px; border-radius: 6px; font-size: 14px;
+  background: var(--bg-card); border: 1px solid var(--border); color: var(--text);
+}
+.report-input:focus { border-color: var(--accent); outline: none; }
+.report-meta { padding: 12px 20px 4px; font-size: 14px; color: var(--text-dim); }
+.report-list { padding: 8px 20px 30px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+.report-item {
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px 16px;
+}
+.report-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.report-date { font-size: 12px; color: var(--text-faint); }
+.report-rating { font-size: 12px; color: #f23645; font-weight: 600; }
+.report-title { font-size: 14px; font-weight: 600; margin-bottom: 8px; line-height: 1.5; color: var(--text); }
+.report-foot { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--text-dim); }
+.report-pdf { color: var(--accent); text-decoration: none; }
+.report-pdf:hover { text-decoration: underline; }
+.report-empty { padding: 40px; text-align: center; color: var(--text-faint); }
+@media (max-width: 768px) { .report-toolbar { flex-wrap: wrap; } .report-input { flex: 1 1 100%; } }
+
 .event-toolbar {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 20px; border-bottom: 1px solid var(--border);

@@ -28,6 +28,7 @@
     <div class="tab" data-tab="market">📊 市场分析</div>
     <div class="tab" data-tab="hotspot">🔥 题材热点</div>
     <div class="tab" data-tab="news">📰 每日新闻</div>
+    <div class="tab" data-tab="report">📑 个股研报</div>
   </nav>
 
   <!-- ===================== 形态筛选（默认页） ===================== -->
@@ -244,6 +245,16 @@
     </main>
   </div>
   </div><!-- /panel-screener -->
+
+  <!-- ===================== 个股研报面板 ===================== -->
+  <div class="tab-panel" id="panel-report">
+    <div class="report-toolbar">
+      <input type="text" id="reportCode" class="report-input" placeholder="输入 6 位股票代码，如 600519" maxlength="6" autocomplete="off">
+      <button class="ghost-btn" id="reportQueryBtn">🔍 查询研报</button>
+    </div>
+    <div class="report-meta" id="reportMeta"></div>
+    <div class="report-list" id="reportList"></div>
+  </div>
 
   <!-- ===================== 市场事件面板（涨停/跌停/连板/龙虎榜 共用） ===================== -->
   <div class="event-panel hidden" id="eventPanel">

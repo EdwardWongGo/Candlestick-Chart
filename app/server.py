@@ -354,6 +354,33 @@ def sync_now():
 
 
 # ---------------------------------------------------------------------------
+# 个股研报
+# ---------------------------------------------------------------------------
+@app.route("/api/report/<code>")
+def stock_reports(code):
+    """获取个股最近一年研报列表。"""
+    code = str(code).strip().zfill(6)
+    if not code.isdigit() or len(code) != 6:
+        return jsonify({"error": "股票代码格式错误（需 6 位数字）"}), 400
+    try:
+        from .reports import fetch_reports
+        reports = fetch_reports(code)
+        name = ""
+        try:
+            q = get_quote_source().get_quote(code)
+            name = q.get("name", "")
+        except Exception:
+            pass
+        return jsonify({
+            "code": code, "name": name,
+            "days": 365, "count": len(reports),
+            "reports": reports,
+        })
+    except Exception as e:
+        return jsonify({"error": f"研报获取失败：{e}", "reports": []}), 500
+
+
+# ---------------------------------------------------------------------------
 # 历史筛选结果
 # ---------------------------------------------------------------------------
 @app.route("/api/history")

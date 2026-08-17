@@ -12,6 +12,7 @@ const API = {
   history: '/api/history',
   historyItem: (id) => `/api/history/${id}`,
   kline: (code, tf) => `/api/kline/${code}?tf=${tf}`,
+  report: (code) => `/api/report/${code}`,
   import: '/api/import',
   selftest: '/api/selftest',
   export: '/api/export',
@@ -105,6 +106,9 @@ function bindEvents() {
     state.page = 1;
     renderResults();
   });
+  // 个股研报查询
+  document.getElementById('reportQueryBtn').addEventListener('click', queryReport);
+  document.getElementById('reportCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') queryReport(); });
   // 结果表所有列点击排序
   document.querySelectorAll('th.sortable').forEach((th) => {
     th.addEventListener('click', () => {
@@ -1202,9 +1206,18 @@ function switchTab(tab) {
   state.eventSub = null;
   document.querySelectorAll('#mainTabs .tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === tab));
   const isScreener = tab === 'screener';
+  const isReport = tab === 'report';
   document.getElementById('panel-screener').classList.toggle('active', isScreener);
-  document.getElementById('eventPanel').classList.toggle('hidden', isScreener);
-  if (!isScreener) loadEvent(tab);
+  document.getElementById('panel-report').classList.toggle('active', isReport);
+  document.getElementById('eventPanel').classList.toggle('hidden', isScreener || isReport);
+  if (isReport) {
+    // 已有代码自动查询，否则聚焦输入框
+    const inp = document.getElementById('reportCode');
+    if (inp.value.trim()) queryReport();
+    else inp.focus();
+  } else if (!isScreener) {
+    loadEvent(tab);
+  }
 }
 
 function renderSubTabs(tab) {
@@ -1418,6 +1431,54 @@ async function openSeat(code) {
   } catch (e) {
     document.getElementById('seatBody').innerHTML = '<div style="padding:20px;color:var(--up)">加载失败</div>';
   }
+}
+
+// ===================== 个股研报 =====================
+async function queryReport() {
+  const code = document.getElementById('reportCode').value.trim();
+  if (!/^\d{6}$/.test(code)) {
+    alert('请输入 6 位股票代码，如 600519');
+    return;
+  }
+  const meta = document.getElementById('reportMeta');
+  const list = document.getElementById('reportList');
+  meta.textContent = `正在查询 ${code} 的研报…`;
+  list.innerHTML = '';
+  try {
+    const r = await fetch(API.report(code));
+    const d = await r.json();
+    if (d.error) {
+      meta.textContent = `❌ ${d.error}`;
+      return;
+    }
+    meta.innerHTML = d.count > 0
+      ? `📑 <b>${d.name || d.code}</b>（${d.code}）最近一年研报 <b>${d.count}</b> 篇`
+      : `📑 <b>${d.name || d.code}</b>（${d.code}）最近一年暂无研报`;
+    renderReportList(list, d.reports || []);
+  } catch (e) {
+    meta.textContent = '❌ 查询失败，请检查网络后重试';
+  }
+}
+
+function renderReportList(container, reports) {
+  if (!reports.length) {
+    container.innerHTML = '<div class="report-empty">最近一年没有研报记录</div>';
+    return;
+  }
+  container.innerHTML = reports.map((r) => `
+    <div class="report-item">
+      <div class="report-head">
+        <span class="report-date">${r.date}</span>
+        <span class="report-rating">${r.rating || '—'}</span>
+      </div>
+      <div class="report-title">${r.title}</div>
+      <div class="report-foot">
+        <span>🏢 ${r.org}</span>
+        ${r.industry ? `<span>📂 ${r.industry}</span>` : ''}
+        ${r.eps_this != null ? `<span>EPS 预测：${r.eps_this}${r.eps_next != null ? ` / ${r.eps_next}` : ''}</span>` : ''}
+        ${r.pdf_url ? `<a href="${r.pdf_url}" target="_blank" rel="noopener" class="report-pdf">📄 查看 PDF</a>` : ''}
+      </div>
+    </div>`).join('');
 }
 
 function closeSeat() {
