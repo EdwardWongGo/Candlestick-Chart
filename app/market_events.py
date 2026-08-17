@@ -644,31 +644,98 @@ def get_opened(direction: str = "up") -> dict:
     return out
 
 
-def get_daily_news(limit: int = 200) -> dict:
-    """每日新闻：以最近交易日为时间维度，展示该交易日 00:00 至当前的当日新闻。
+def _sina_news_all(day_start: datetime, day_end: datetime, max_pages: int = 25) -> List[dict]:
+    """新浪财经 7x24 快讯翻页拉取 [day_start, day_end] 窗口内的全部新闻。
 
-    盘中展示当日快讯；周末展示最近交易日当日的新闻（含节假日边界由
-    latest_trade_date() 校准）。
+    新浪快讯单页上限 100 条、按时间倒序，逐页翻取直到越过窗口起点。
+    条目 ext.stocks 含结构化关联股票（market=cn），用于「★重点」标记。
+    """
+    import json
+    import re
+    ua = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36")
+    items: List[dict] = []
+    seen = set()
+    for page in range(1, max_pages + 1):
+        try:
+            r = requests.get(
+                "https://zhibo.sina.com.cn/api/zhibo/feed",
+                params={"page": page, "page_size": 100, "zhibo_id": 152, "tag_id": 0},
+                headers={"User-Agent": ua, "Referer": "https://finance.sina.com.cn/"}, timeout=10,
+            )
+            lst = ((r.json().get("result") or {}).get("data") or {})
+            lst = (lst.get("feed") or {}).get("list") or []
+        except Exception:
+            break
+        if not lst:
+            break
+        reached_start = True   # 本页是否有早于窗口起点的条目（决定是否继续翻页）
+        for it in lst:
+            try:
+                t = datetime.strptime(str(it.get("create_time", ""))[:19], "%Y-%m-%d %H:%M:%S")
+            except (ValueError, TypeError):
+                continue
+            if t > day_end:
+                continue
+            if t < day_start:
+                reached_start = False
+                continue
+            nid = it.get("id")
+            if nid in seen:
+                continue
+            seen.add(nid)
+            stocks = []
+            try:
+                ext = json.loads(it.get("ext") or "{}")
+                for s in (ext.get("stocks") or []):
+                    sym = str(s.get("symbol") or "")
+                    if s.get("market") == "cn" and re.fullmatch(r"(sz|sh|bj)\d{6}", sym):
+                        code = sym[2:]
+                        if config.classify_market(code) != "other":
+                            stocks.append(code)
+            except Exception:
+                pass
+            items.append({
+                "title": (it.get("rich_text") or "").strip(),
+                "summary": "",
+                "time": str(it.get("create_time", ""))[:19],
+                "stocks": stocks,
+            })
+        if not reached_start:
+            break
+    return items
+
+
+def get_daily_news(limit: int = 500) -> dict:
+    """每日新闻：展示最近交易日「全天」的新闻（00:00 至 23:59），覆盖盘前/盘中/盘后全部时段。
+
+    数据源：新浪财经 7x24 快讯（翻页拉取全天，ext.stocks 做重点标记）；
+    新浪不可用时回退东财快讯（仅最近约 200 条）。
     """
     trade_date = latest_trade_date()
     day_start = datetime.strptime(trade_date + " 00:00:00", "%Y-%m-%d %H:%M:%S")
-    now = datetime.now()
-    all_news = get_news(limit).get("news", [])
+    day_end = datetime.strptime(trade_date + " 23:59:59", "%Y-%m-%d %H:%M:%S")
+    try:
+        all_news = _sina_news_all(day_start, day_end)
+    except Exception:
+        all_news = []
+    if not all_news:
+        all_news = get_news(limit).get("news", [])   # 兜底：东财快讯
     filtered = []
     for n in all_news:
         try:
             t = datetime.strptime(n["time"], "%Y-%m-%d %H:%M:%S")
         except (ValueError, TypeError):
             continue
-        if day_start <= t <= now:
+        if day_start <= t <= day_end:
             n["important"] = bool(n.get("stocks"))   # 带关联股票 = 重点
             filtered.append(n)
-    # 重点新闻优先（稳定排序，组内保持最新在前）
+    # 重点新闻优先（稳定排序：组内保持新浪返回的时间倒序，即最新在前）
     filtered.sort(key=lambda n: not n["important"])
     return {
         "date": trade_date,
         "day_start": day_start.strftime("%Y-%m-%d %H:%M"),
-        "day_end": now.strftime("%Y-%m-%d %H:%M"),
+        "day_end": day_end.strftime("%Y-%m-%d %H:%M"),
         "count": len(filtered),
         "news": filtered,
     }

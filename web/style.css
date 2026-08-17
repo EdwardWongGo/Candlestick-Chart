@@ -198,6 +198,24 @@ body {
 }
 .content-toolbar .ghost-btn { padding: 4px 10px; font-size: 12px; }
 
+/* ===== 事件标题旁内联统计（封板率等） ===== */
+.event-title-stats {
+  font-size: 12px; color: var(--text-dim); line-height: 1.55;
+  margin-left: 14px; flex: 1; min-width: 0;
+}
+.event-title-stats .ts-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.event-title-stats .ts-formula { color: var(--text-faint); font-size: 11px; }
+
+/* ===== 市场分析报告按钮 ===== */
+.market-toolbar { display: flex; justify-content: flex-end; padding: 2px 4px 10px; }
+
+/* ===== 每日新闻时间段分组 ===== */
+.news-group { margin-bottom: 16px; }
+.news-group-head {
+  font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 8px;
+  padding: 8px 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+}
+
 /* ===== 涨停封板率 / 涨停打开 ===== */
 .seal-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; padding: 4px; }
 .seal-card {

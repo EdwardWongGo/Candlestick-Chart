@@ -24,6 +24,8 @@ _INDICES = [
     {"symbol": "sz399001", "secid": "0.399001", "name": "深证成指"},
     {"symbol": "sz399006", "secid": "0.399006", "name": "创业板指"},
     {"symbol": "sh000300", "secid": "1.000300", "name": "沪深300"},
+    {"symbol": "sh000688", "secid": "1.000688", "name": "科创50"},
+    {"symbol": "bj899050", "secid": "0.899050", "name": "北证50"},
 ]
 
 
@@ -60,39 +62,42 @@ def _get_index_kline(symbol: str, count: int = 5) -> list:
 
 
 def _get_fund_flow() -> list:
-    """东财资金流（上证指数，最近 2 个交易日）。"""
-    try:
-        r = requests.get(
-            "https://push2.eastmoney.com/api/qt/stock/fflow/daykline/get",
-            params={
-                "secid": "1.000001",
-                "fields1": "f1,f2,f3,f7",
-                "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65",
-                "klt": "101", "lmt": "5",
-            },
-            headers={"User-Agent": _UA, "Referer": "https://finance.eastmoney.com/"},
-            timeout=8,
-        )
-        klines = (r.json().get("data") or {}).get("klines") or []
-        out = []
-        for k in klines[-2:]:   # 今日 + 昨日
-            p = k.split(",")
-            if len(p) < 13:
-                continue
-            out.append({
-                "date": p[0],
-                "main_net": float(p[1]),        # 主力净流入（元）
-                "small_net": float(p[2]),       # 小单净流入
-                "medium_net": float(p[3]),      # 中单净流入
-                "big_net": float(p[4]),         # 大单净流入
-                "super_net": float(p[5]),       # 超大单净流入
-                "main_net_pct": float(p[6]),    # 主力净占比 %
-                "close": float(p[11]),
-                "change_pct": float(p[12]),
-            })
-        return out
-    except Exception:
-        return []
+    """东财资金流（上证指数，最近 2 个交易日）。多域名容错 + 重试。"""
+    hosts = ("push2delay.eastmoney.com", "push2.eastmoney.com")
+    q = {
+        "secid": "1.000001",
+        "fields1": "f1,f2,f3,f7",
+        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65",
+        "klt": "101", "lmt": "5",
+    }
+    headers = {"User-Agent": _UA, "Referer": "https://finance.eastmoney.com/"}
+    for host in hosts:
+        for _attempt in range(2):
+            try:
+                r = requests.get(f"https://{host}/api/qt/stock/fflow/daykline/get",
+                                 params=q, headers=headers, timeout=8)
+                klines = (r.json().get("data") or {}).get("klines") or []
+                if klines:
+                    out = []
+                    for k in klines[-2:]:   # 今日 + 昨日
+                        p = k.split(",")
+                        if len(p) < 13:
+                            continue
+                        out.append({
+                            "date": p[0],
+                            "main_net": float(p[1]),        # 主力净流入（元）
+                            "small_net": float(p[2]),       # 小单净流入
+                            "medium_net": float(p[3]),      # 中单净流入
+                            "big_net": float(p[4]),         # 大单净流入
+                            "super_net": float(p[5]),       # 超大单净流入
+                            "main_net_pct": float(p[6]),    # 主力净占比 %
+                            "close": float(p[11]),
+                            "change_pct": float(p[12]),
+                        })
+                    return out
+            except Exception:
+                pass
+    return []
 
 
 def get_market_overview() -> dict:

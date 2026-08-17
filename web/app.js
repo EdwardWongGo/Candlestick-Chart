@@ -21,7 +21,7 @@ const API = {
   ladderDown: () => '/api/ladder-down',
   dragonTiger: (date) => `/api/dragon-tiger${date ? '?date=' + date : ''}`,
   dragonTigerSeats: (code, date) => `/api/dragon-tiger/${code}${date ? '?date=' + date : ''}`,
-  dragonTigerHistory: (code, days = 90) => `/api/dragon-tiger/history/${code}?days=${days}`,
+  dragonTigerHistory: (code, days = 180) => `/api/dragon-tiger/history/${code}?days=${days}`,
   latestDate: '/api/latest-trade-date',
   hotspot: (date) => `/api/hotspot${date ? '?date=' + date : ''}`,
   news: '/api/news',
@@ -1188,12 +1188,10 @@ const EVENT_TITLES = { zt: '涨停板', dt: '跌停板', ladder: '连板天梯',
 const SUB_TABS = {
   zt: [
     { key: 'board', zh: '封板涨停' },
-    { key: 'seal_rate', zh: '封板率' },
     { key: 'opened', zh: '涨停打开' },
   ],
   dt: [
     { key: 'board', zh: '封板跌停' },
-    { key: 'seal_rate', zh: '封板率' },
     { key: 'opened', zh: '跌停打开' },
   ],
   ladder: [{ key: 'up', zh: '涨停连板' }, { key: 'down', zh: '跌停连板' }],
@@ -1258,13 +1256,20 @@ async function loadEvent(tab) {
   document.getElementById('eventContent').innerHTML = '';
   const sub = state.eventSub;
   try {
+    // 涨停/跌停：标题旁内联展示今日/昨日封板率统计（随行情实时更新）
+    if (tab === 'zt' || tab === 'dt') {
+      const dir = tab === 'zt' ? 'up' : 'down';
+      try {
+        renderTitleSealRate(dir, await (await fetch(API.sealRate(dir))).json());
+      } catch (e) { clearTitleSealRate(); }
+    } else {
+      clearTitleSealRate();
+    }
     if (tab === 'zt') {
-      if (sub === 'seal_rate') renderSealRate('up', await (await fetch(API.sealRate('up'))).json());
-      else if (sub === 'opened') renderOpened('up', await (await fetch(API.opened('up'))).json());
+      if (sub === 'opened') renderOpened('up', await (await fetch(API.opened('up'))).json());
       else renderBoard('zt', await (await fetch(API.board('zt', date))).json());
     } else if (tab === 'dt') {
-      if (sub === 'seal_rate') renderSealRate('down', await (await fetch(API.sealRate('down'))).json());
-      else if (sub === 'opened') renderOpened('down', await (await fetch(API.opened('down'))).json());
+      if (sub === 'opened') renderOpened('down', await (await fetch(API.opened('down'))).json());
       else renderBoard('dt', await (await fetch(API.board('dt', date))).json());
     } else if (tab === 'ladder') {
       if (sub === 'down') renderLadder(await (await fetch(API.ladderDown())).json(), true);
@@ -1368,7 +1373,7 @@ async function openSeat(code) {
   try {
     const [d, h] = await Promise.all([
       (await fetch(API.dragonTigerSeats(code, date))).json(),
-      (await fetch(API.dragonTigerHistory(code, 90))).json(),   // 最近 3 个月上榜明细
+      (await fetch(API.dragonTigerHistory(code, 180))).json(),   // 最近 6 个月上榜明细
     ]);
     const seatRow = (s) => `<tr><td>${s.name}</td><td class="num-up">${s.buy_wan}万</td><td class="num-down">${s.sell_wan}万</td><td>${s.net_wan}万</td></tr>`;
     const buyRows = (d.buy_seats || []).map(seatRow).join('');
@@ -1381,7 +1386,7 @@ async function openSeat(code) {
         const netCls = r.net_buy_wan >= 0 ? 'num-up' : 'num-down';
         return `<tr><td>${r.date}</td><td class="${r.change_pct >= 0 ? 'num-up' : 'num-down'}">${r.change_pct >= 0 ? '+' : ''}${r.change_pct}%</td><td class="${netCls}">${r.net_buy_wan >= 0 ? '+' : ''}${r.net_buy_wan}万</td><td>${r.turnover_pct}%</td><td class="reason-cell">${r.reason}</td></tr>`;
       }).join('');
-      return recRows || '<tr><td colspan="5" style="color:var(--text-faint)">近3个月无上榜记录</td></tr>';
+      return recRows || '<tr><td colspan="5" style="color:var(--text-faint)">近6个月无上榜记录</td></tr>';
     };
 
     document.getElementById('seatBody').innerHTML = `
@@ -1400,7 +1405,7 @@ async function openSeat(code) {
       </div>
       <div class="seat-section">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <h4 style="margin:0">近3个月上榜明细（${h.count} 次）</h4>
+          <h4 style="margin:0">近6个月上榜明细（${h.count} 次）</h4>
           <button class="ghost-btn" id="historySortBtn">日期${historyAsc ? '升序 ↑' : '降序 ↓'}</button>
         </div>
         <table class="seat-table"><thead><tr><th>日期</th><th>涨跌幅</th><th>净买额</th><th>换手</th><th>上榜原因</th></tr></thead><tbody id="historyBody">${renderHistory()}</tbody></table>
@@ -1447,8 +1452,24 @@ function renderHotspot(d) {
 function renderDailyNews(d) {
   const news = d.news || [];
   document.getElementById('eventStats').innerHTML =
-    `每日新闻 <b>${d.date}</b> · 共 <b>${d.count}</b> 条（★ 为重点）`;
-  const html = news.map((n) => {
+    `每日新闻 <b>${d.date}</b>（全天 00:00~23:59）· 共 <b>${d.count}</b> 条（★ 为重点）`;
+
+  // 按时间段归并：盘前 / 盘中 / 盘后
+  const bucket = (time) => {
+    const hm = (time || '').slice(11, 16);   // "HH:MM"
+    if (hm < '09:30') return 'pre';          // 盘前
+    if (hm <= '15:00') return 'intraday';    // 盘中（含午间）
+    return 'post';                           // 盘后
+  };
+  const GROUPS = [
+    { key: 'pre', zh: '盘前（00:00–09:29）' },
+    { key: 'intraday', zh: '盘中（09:30–15:00）' },
+    { key: 'post', zh: '盘后（15:00–23:59）' },
+  ];
+  const grouped = { pre: [], intraday: [], post: [] };
+  news.forEach((n) => grouped[bucket(n.time)] && grouped[bucket(n.time)].push(n));
+
+  const itemHtml = (n) => {
     const star = n.important ? '<span style="color:var(--resonance)">★</span>' : '<span style="color:var(--text-faint)">·</span>';
     const stockTags = (n.stocks || []).map((c) => `<span class="tag tag-tf news-stock" data-code="${c}">${c}</span>`).join('');
     return `<div class="news-item">
@@ -1459,7 +1480,16 @@ function renderDailyNews(d) {
         ${stockTags ? `<div class="news-stocks">${stockTags}</div>` : ''}
       </div>
     </div>`;
+  };
+  const html = GROUPS.map((g) => {
+    const list = grouped[g.key] || [];
+    if (!list.length) return '';
+    return `<div class="news-group">
+      <div class="news-group-head">${g.zh} · ${list.length} 条</div>
+      ${list.map(itemHtml).join('')}
+    </div>`;
   }).join('');
+
   document.getElementById('eventContent').innerHTML =
     html || '<div style="padding:40px;color:var(--text-faint);text-align:center">暂无当日新闻</div>';
   document.querySelectorAll('#eventContent .news-stock[data-code]').forEach((el) => {
@@ -1467,25 +1497,25 @@ function renderDailyNews(d) {
   });
 }
 
-// ===================== 涨停/跌停 封板率 / 打开 =====================
-function renderSealRate(dir, d) {
+// ===================== 涨停/跌停 封板率（标题旁内联）/ 打开 =====================
+function renderTitleSealRate(dir, d) {
+  const el = document.getElementById('eventTitleStats');
+  if (!el) return;
   const kw = dir === 'up' ? '涨停' : '跌停';
-  const card = (label, s) => {
-    const rate = s.seal_rate != null ? `${s.seal_rate}%` : '—';
-    const rateCls = s.seal_rate != null && s.seal_rate >= 50 ? 'num-up' : 'num-down';
-    return `<div class="seal-card">
-      <div class="seal-date">${label} · <b>${s.date || '—'}</b></div>
-      <div class="seal-metrics">
-        <div class="seal-metric"><span>封板${kw}</span><b>${s.board_count}</b> 只</div>
-        <div class="seal-metric"><span>${kw}打开</span><b>${s.opened_count}</b> 只</div>
-        <div class="seal-metric"><span>封板率</span><b class="${rateCls}">${rate}</b></div>
-      </div>
-    </div>`;
+  const fmt = (s) => {
+    const t = s || {};
+    return `今日${kw}数${t.board_count ?? 0}，${kw}打开${t.opened_count ?? 0}，封板率${t.seal_rate != null ? t.seal_rate + '%' : '—'}`;
   };
-  document.getElementById('eventStats').innerHTML =
-    `${kw}封板率 = 封板${kw} ÷ (封板${kw} + ${kw}打开)`;
-  document.getElementById('eventContent').innerHTML =
-    `<div class="seal-grid">${card('今日', d.today || {})}${card('昨日', d.yesterday || {})}</div>`;
+  const today = d.today || {}, yesterday = d.yesterday || {};
+  el.innerHTML =
+    `<div class="ts-line">${fmt(today)}</div>`
+    + `<div class="ts-line">昨日${kw}数${yesterday.board_count ?? 0}，${kw}打开${yesterday.opened_count ?? 0}，封板率${yesterday.seal_rate != null ? yesterday.seal_rate + '%' : '—'}</div>`
+    + `<div class="ts-formula">封板率=封板${kw}数÷(封板${kw}数+${kw}打开数)，随行情实时更新</div>`;
+}
+
+function clearTitleSealRate() {
+  const el = document.getElementById('eventTitleStats');
+  if (el) el.innerHTML = '';
 }
 
 function renderOpened(dir, d) {
@@ -1551,11 +1581,100 @@ function renderMarket(d) {
   }).join('');
   document.getElementById('eventStats').innerHTML = `更新于 ${d.updated || '—'}`;
   document.getElementById('eventContent').innerHTML = `
+    <div class="market-toolbar">
+      <button class="ghost-btn" id="marketReportBtn">📄 生成市场分析报告</button>
+    </div>
     <div class="idx-grid">${cards || '<div style="padding:40px;color:var(--text-faint);text-align:center">暂无指数数据</div>'}</div>
     <div class="flow-section">
       <div class="flow-head">上证指数 · 资金流向</div>
       <table class="event-table"><thead><tr><th>日期</th><th>主力净流入</th><th>超大单</th><th>大单</th><th>中单</th><th>小单</th><th>主力净占比</th></tr></thead><tbody>${flowRows || '<tr><td colspan="7" style="text-align:center;color:var(--text-faint);padding:30px">暂无资金流向数据</td></tr>'}</tbody></table>
     </div>`;
+  const rb = document.getElementById('marketReportBtn');
+  if (rb) rb.addEventListener('click', () => buildMarketReport(d));
+}
+
+// ===================== 市场分析报告 =====================
+function buildMarketReport(d) {
+  const fmtWan = (v) => (v == null ? '—' : (v >= 1e4 ? (v / 1e4).toFixed(2) + '亿' : v.toFixed(0) + '万'));
+  const fmtHand = (v) => (v == null ? '—' : (v >= 1e4 ? (v / 1e4).toFixed(2) + '亿手' : v.toFixed(0) + '手'));
+  const fmtYuan = (v) => (v == null ? '—' : (v >= 1e8 ? (v / 1e8).toFixed(2) + '亿' : (v / 1e4).toFixed(0) + '万'));
+  const up = (v) => (v >= 0 ? '+' : '');
+  const chgCls = (v) => (v >= 0 ? '#f23645' : '#26a69a');   // 红涨绿跌（A股惯例）
+  const now = new Date().toLocaleString('zh-CN');
+
+  // 指数走势解读（含科创50 / 北证50 重点点评）
+  const idxComment = (ix) => {
+    const dir = ix.change_pct >= 0 ? '上涨' : '下跌';
+    const volChg = (ix.volume_today != null && ix.volume_yesterday)
+      ? ((ix.volume_today - ix.volume_yesterday) / ix.volume_yesterday * 100) : null;
+    const volTxt = (volChg == null) ? '成交量较昨日持平（数据暂缺）'
+      : (Math.abs(volChg) < 1 ? '成交量与昨日基本持平'
+        : (volChg > 0 ? `放量 ${volChg.toFixed(1)}%` : `缩量 ${Math.abs(volChg).toFixed(1)}%`));
+    return `收于 <b>${ix.price.toFixed(2)}</b>，${dir} <b style="color:${chgCls(ix.change_pct)}">${up(ix.change_pct)}${ix.change_pct.toFixed(2)}%</b>（${up(ix.change)}${ix.change.toFixed(2)} 点），${volTxt}，成交额 ${fmtWan(ix.amount_today_wan)}。`;
+  };
+  const find = (name) => (d.indices || []).find((i) => i.name === name);
+  const kc = find('科创50'), bj = find('北证50'), sh = find('上证指数');
+  const relative = (ix) => {
+    if (!ix || !sh) return '';
+    const gap = ix.change_pct - sh.change_pct;
+    return `相对上证指数${gap >= 0 ? '强' : '弱'} ${Math.abs(gap).toFixed(2)} 个百分点`;
+  };
+
+  const tableRows = (d.indices || []).map((ix) => {
+    const volChg = (ix.volume_today != null && ix.volume_yesterday)
+      ? ((ix.volume_today - ix.volume_yesterday) / ix.volume_yesterday * 100) : null;
+    return `<tr>
+      <td>${ix.name}</td><td>${ix.code}</td><td>${ix.price.toFixed(2)}</td>
+      <td style="color:${chgCls(ix.change_pct)}">${up(ix.change_pct)}${ix.change_pct.toFixed(2)}%</td>
+      <td>${ix.open.toFixed(2)}</td><td>${ix.high.toFixed(2)}</td><td>${ix.low.toFixed(2)}</td><td>${ix.pre_close.toFixed(2)}</td>
+      <td>${fmtHand(ix.volume_today)}</td><td>${fmtHand(ix.volume_yesterday)}</td>
+      <td>${volChg != null ? up(volChg) + volChg.toFixed(1) + '%' : '—'}</td><td>${fmtWan(ix.amount_today_wan)}</td></tr>`;
+  }).join('');
+
+  const flowRows = (d.fund_flow || []).map((f) => `<tr>
+    <td>${f.date}</td><td style="color:${chgCls(f.main_net)}">${up(f.main_net)}${fmtYuan(f.main_net)}</td>
+    <td style="color:${chgCls(f.super_net)}">${up(f.super_net)}${fmtYuan(f.super_net)}</td>
+    <td style="color:${chgCls(f.big_net)}">${up(f.big_net)}${fmtYuan(f.big_net)}</td>
+    <td style="color:${chgCls(f.medium_net)}">${up(f.medium_net)}${fmtYuan(f.medium_net)}</td>
+    <td style="color:${chgCls(f.small_net)}">${up(f.small_net)}${fmtYuan(f.small_net)}</td>
+    <td style="color:${chgCls(f.main_net_pct)}">${up(f.main_net_pct)}${f.main_net_pct.toFixed(2)}%</td></tr>`).join('');
+  const lastFlow = (d.fund_flow || [])[0];
+
+  const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
+  <title>市场分析报告</title>
+  <style>
+    body{font-family:"Microsoft YaHei",Arial,sans-serif;max-width:920px;margin:0 auto;padding:24px;color:#2b3440;line-height:1.7;background:#f7f9fc}
+    h1{font-size:22px} .meta{color:#8b96a8;font-size:13px;margin-bottom:16px}
+    h2{font-size:16px;border-left:4px solid #3b82f6;padding-left:10px;margin-top:26px}
+    table{width:100%;border-collapse:collapse;font-size:13px;margin:10px 0}
+    th,td{border:1px solid #dde3ec;padding:7px 9px;text-align:left}
+    th{background:#eef2f8}
+    .comment{background:#f0f4fa;border:1px solid #d8e0ec;border-radius:8px;padding:12px 14px;margin:8px 0}
+    .disclaimer{margin-top:28px;color:#8b96a8;font-size:12px;border-top:1px solid #dde3ec;padding-top:12px}
+  </style></head><body>
+  <h1>📊 市场分析报告</h1>
+  <div class="meta">生成时间：${now} · 行情更新：${d.updated || '—'}</div>
+
+  <h2>一、指数行情概览</h2>
+  <table><thead><tr><th>指数</th><th>代码</th><th>最新</th><th>涨跌幅</th><th>今开</th><th>最高</th><th>最低</th><th>昨收</th><th>成交量(今)</th><th>成交量(昨)</th><th>量比</th><th>成交额</th></tr></thead><tbody>${tableRows || '<tr><td colspan="12">暂无数据</td></tr>'}</tbody></table>
+
+  <h2>二、科创50 走势解读</h2>
+  <div class="comment">${kc ? `科创50 ${idxComment(kc)}${relative(kc)}。` : '科创50 数据暂缺。'}</div>
+
+  <h2>三、北证50 走势解读</h2>
+  <div class="comment">${bj ? `北证50 ${idxComment(bj)}${relative(bj)}。` : '北证50 数据暂缺。'}</div>
+
+  <h2>四、市场资金流向（上证指数）</h2>
+  <table><thead><tr><th>日期</th><th>主力净流入</th><th>超大单</th><th>大单</th><th>中单</th><th>小单</th><th>主力净占比</th></tr></thead><tbody>${flowRows || '<tr><td colspan="7">暂无资金流向数据</td></tr>'}</tbody></table>
+  <div class="comment">${lastFlow ? `主力资金${lastFlow.main_net >= 0 ? '净流入' : '净流出'} <b>${fmtYuan(lastFlow.main_net)}</b>（净占比 ${lastFlow.main_net_pct}%），超大单${lastFlow.super_net >= 0 ? '净流入' : '净流出'} ${fmtYuan(lastFlow.super_net)}，大单${lastFlow.big_net >= 0 ? '净流入' : '净流出'} ${fmtYuan(lastFlow.big_net)}，显示${lastFlow.main_net >= 0 ? '增量资金入场、做多情绪占优' : '资金离场、做多情绪偏谨慎'}。` : '资金流向数据暂缺。'}</div>
+
+  <div class="disclaimer">本报告由 A股量化分析工具自动生成，数据来自公开行情源（腾讯财经 / 东方财富），仅供学习研究参考，不构成任何投资建议。股市有风险，投资需谨慎。</div>
+  </body></html>`;
+
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank');
+  URL.revokeObjectURL(url);
 }
 
 // ===================== 生成筛选报告 =====================
