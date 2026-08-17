@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-市场分析 —— 指数行情（今日/昨日成交量、成交额）+ 资金流向
+市场分析 —— 指数行情（今日/昨日成交量、成交额）+ 指数 K 线（日/周/月）
 
 数据来源：
 - 指数实时行情：腾讯财经实时行情接口（qt.gtimg.cn）
-- 指数历史日 K（昨日成交量）：腾讯财经 K 线接口（proxy.finance.qq.com）
-- 资金流向（主力/超大单/大单/中单/小单）：东方财富资金流接口（push2.eastmoney.com）
+- 指数历史 K 线：腾讯财经 K 线接口（proxy.finance.qq.com）；北证50 走东财（push2his.eastmoney.com）
 
 Author: HZQ
 """
@@ -17,6 +16,11 @@ import requests
 
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36")
+
+# 统一会话：绕过系统环境代理（避免失效代理导致 ProxyError），直连公网行情接口
+_session = requests.Session()
+_session.trust_env = False
+_session.headers.update({"User-Agent": _UA})
 
 # 关注的指数（symbol=腾讯行情代码, secid=东财代码, name=展示名）
 _INDICES = [
@@ -44,7 +48,7 @@ def _get_tencent_quotes() -> dict:
     """腾讯实时行情，返回 {symbol: 字段列表}（GBK 编码文本，~ 分隔）。"""
     syms = ",".join(i["symbol"] for i in _INDICES)
     try:
-        r = requests.get("https://qt.gtimg.cn/q=" + syms, timeout=8)
+        r = _session.get("https://qt.gtimg.cn/q=" + syms, timeout=8)
         r.encoding = "gbk"
     except Exception:
         return {}
@@ -59,21 +63,54 @@ def _get_tencent_quotes() -> dict:
 
 
 def _get_index_kline(symbol: str, tf: str = "day", count: int = 120) -> list:
-    """腾讯指数 K 线，返回升序 [[date, open, close, high, low, volume], ...]。
+    """指数 K 线，返回升序 [[date, open, close, high, low, volume], ...]。
 
-    tf: day/week/month；qfq 与 day 兼容（指数无复权概念）。
+    北证50 走东财接口（腾讯 fqkline 对 bj899050 仅返回最新 1 根），其余走腾讯。
     """
     if tf not in _KLINE_TF:
         tf = "day"
+    if symbol == "bj899050":
+        return _get_em_index_kline(symbol, tf, count)
     param_tf, tag = _KLINE_TF[tf]
     try:
-        r = requests.get(
+        r = _session.get(
             "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/fqkline/get",
             params={"param": f"{symbol},{param_tf},,,{count},qfq"},
             headers={"User-Agent": _UA, "Referer": "https://gu.qq.com/"}, timeout=8,
         )
         data = (r.json().get("data") or {}).get(symbol) or {}
         rows = data.get(tag) or data.get(param_tf) or []
+        return rows
+    except Exception:
+        return []
+
+
+def _get_em_index_kline(symbol: str, tf: str, count: int) -> list:
+    """北证50 指数 K 线（新浪源，腾讯对 bj899050 仅返回 1 根、东财易限流）。
+
+    返回 [[date,open,close,high,low,volume],...] 升序。scale: 240=日 1200=周 7200=月。
+    """
+    import json as _json
+    import urllib.parse as _up
+    import urllib.request as _ur
+    scale = {"day": 240, "week": 1200, "month": 7200}.get(tf, 240)
+    qs = _up.urlencode({"symbol": "bj899050", "scale": scale, "ma": "no", "datalen": count})
+    url = ("https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20_=/"
+           "CN_MarketDataService.getKLineData?" + qs)
+    try:
+        opener = _ur.build_opener(_ur.ProxyHandler({}))   # 不走系统代理
+        req = _ur.Request(url, headers={
+            "User-Agent": _UA, "Referer": "https://finance.sina.com.cn/",
+        })
+        with opener.open(req, timeout=8) as resp:
+            txt = resp.read().decode("utf-8", errors="replace")
+        data = _json.loads(txt[txt.index("(") + 1: txt.rindex(")")])
+        rows = []
+        for r in data or []:
+            try:
+                rows.append([r["day"], r["open"], r["close"], r["high"], r["low"], r["volume"]])
+            except (KeyError, TypeError):
+                continue
         return rows
     except Exception:
         return []
@@ -116,7 +153,7 @@ def _get_fund_flow() -> list:
     for host in hosts:
         for _attempt in range(2):
             try:
-                r = requests.get(f"https://{host}/api/qt/stock/fflow/daykline/get",
+                r = _session.get(f"https://{host}/api/qt/stock/fflow/daykline/get",
                                  params=q, headers=headers, timeout=8)
                 klines = (r.json().get("data") or {}).get("klines") or []
                 if klines:
@@ -183,6 +220,5 @@ def get_market_overview() -> dict:
         })
     return {
         "indices": indices,
-        "fund_flow": _get_fund_flow(),
         "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }

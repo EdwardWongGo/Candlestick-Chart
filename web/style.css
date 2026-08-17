@@ -254,11 +254,25 @@ body {
 .event-title-stats .ts-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .event-title-stats .ts-formula { color: var(--text-faint); font-size: 11px; }
 
-/* ===== 市场分析报告按钮 ===== */
+/* ===== 市场分析报告按钮（已移除资金流向/报告功能，保留样式占位） ===== */
 .market-toolbar { display: flex; justify-content: flex-end; padding: 2px 4px 10px; }
+
+/* ===== 龙虎榜可排序表头 ===== */
+.lhb-sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+.lhb-sortable:hover { color: var(--accent); }
+.lhb-sortable.sorted { color: var(--accent); }
+
+/* ===== 每日新闻关键字搜索 ===== */
+.news-search-bar { padding: 10px 20px; background: var(--bg-panel); border-bottom: 1px solid var(--border); }
+.news-search-bar input {
+  width: 100%; max-width: 420px; padding: 8px 12px; border-radius: 6px; font-size: 13px;
+  background: var(--bg-card); border: 1px solid var(--border); color: var(--text);
+}
+.news-search-bar input:focus { border-color: var(--accent); outline: none; }
 
 /* ===== 市场分析 K 线图 ===== */
 .market-kline { padding: 14px 20px; background: var(--bg-panel); border-bottom: 1px solid var(--border); }
+.kline-legend-hint { margin-top: 4px; font-size: 11px; color: var(--text-faint); }
 .kline-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .kline-idx-chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .kline-chip {

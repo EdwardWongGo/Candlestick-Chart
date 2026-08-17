@@ -1422,14 +1422,36 @@ function renderLadder(d, isDown = false) {
   });
 }
 
+// 龙虎榜排序状态（涨跌幅/净买额/买入/卖出/换手）
+let lhbSortKey = null, lhbSortDesc = true;
+
 function renderDragonTiger(d) {
   if (d.note) {
     document.getElementById('eventStats').textContent = d.note;
     document.getElementById('eventContent').innerHTML = '';
     return;
   }
-  document.getElementById('eventStats').innerHTML = `<b>${d.date}</b> · 共 <b>${d.count}</b> 条上榜记录`;
-  const rows = (d.stocks || []).map((s) => {
+  document.getElementById('eventStats').innerHTML = `<b>${d.date}</b> · 共 <b>${d.count}</b> 条上榜记录（点击表头排序）`;
+  renderLhbTable(d);
+}
+
+function renderLhbTable(d) {
+  const stocks = [...(d.stocks || [])];
+  // 排序
+  if (lhbSortKey) {
+    const fieldMap = {
+      change_pct: (s) => s.change_pct,
+      net_buy_wan: (s) => s.net_buy_wan,
+      buy_wan: (s) => s.buy_wan,
+      sell_wan: (s) => s.sell_wan,
+      turnover_pct: (s) => s.turnover_pct,
+    };
+    const f = fieldMap[lhbSortKey] || (() => 0);
+    stocks.sort((a, b) => (lhbSortDesc ? f(b) - f(a) : f(a) - f(b)));
+  }
+  const arrow = (k) => (lhbSortKey === k ? (lhbSortDesc ? ' ▾' : ' ▴') : '');
+  const th = (k, zh) => `<th class="lhb-sortable" data-key="${k}">${zh}${arrow(k)}</th>`;
+  const rows = stocks.map((s) => {
     const netCls = s.net_buy_wan >= 0 ? 'num-up' : 'num-down';
     return `<tr class="clickable" data-code="${s.code}">
       <td class="cell-code">${s.code}</td><td>${s.name}</td><td>${s.market_zh}</td>
@@ -1441,7 +1463,19 @@ function renderDragonTiger(d) {
   }).join('');
   const empty = '<tr><td colspan="10" style="text-align:center;color:var(--text-faint);padding:40px">当日无数据</td></tr>';
   document.getElementById('eventContent').innerHTML =
-    `<table class="event-table"><thead><tr><th>代码</th><th>名称</th><th>板块</th><th>涨跌幅</th><th>收盘</th><th>净买额</th><th>买入</th><th>卖出</th><th>换手</th><th>上榜原因</th></tr></thead><tbody>${rows || empty}</tbody></table>`;
+    `<table class="event-table"><thead><tr><th>代码</th><th>名称</th><th>板块</th>
+      ${th('change_pct', '涨跌幅')}<th>收盘</th>
+      ${th('net_buy_wan', '净买额')}${th('buy_wan', '买入')}${th('sell_wan', '卖出')}${th('turnover_pct', '换手')}
+      <th>上榜原因</th></tr></thead><tbody>${rows || empty}</tbody></table>`;
+  // 表头点击排序（升/降序切换）
+  document.querySelectorAll('#eventContent .lhb-sortable').forEach((thEl) => {
+    thEl.addEventListener('click', () => {
+      const k = thEl.dataset.key;
+      if (lhbSortKey === k) lhbSortDesc = !lhbSortDesc;
+      else { lhbSortKey = k; lhbSortDesc = true; }
+      renderLhbTable(d);
+    });
+  });
   document.querySelectorAll('#eventContent tr[data-code]').forEach((tr) => {
     tr.addEventListener('click', () => openSeat(tr.dataset.code));
   });
@@ -1641,10 +1675,19 @@ function renderHotspot(d) {
   });
 }
 
-function renderDailyNews(d) {
-  const news = d.news || [];
+function renderDailyNews(d, keepKw) {
+  const kw = (keepKw || '').trim();
+  const all = d.news || [];
+  // 关键字过滤：标题 / 摘要 / 关联股票代码
+  const news = kw
+    ? all.filter((n) =>
+        (n.title || '').includes(kw) ||
+        (n.summary || '').includes(kw) ||
+        (n.stocks || []).some((c) => c.includes(kw)))
+    : all;
   document.getElementById('eventStats').innerHTML =
-    `每日新闻 <b>${d.date}</b>（全天 00:00~23:59）· 共 <b>${d.count}</b> 条（★ 为重点）`;
+    `每日新闻 <b>${d.date}</b>（全天 00:00~23:59）· 共 <b>${d.count}</b> 条（★ 为重点）` +
+    (kw ? ` · 🔍 筛选「<b>${kw}</b>」命中 <b>${news.length}</b> 条` : '');
 
   // 按时间段归并：盘前 / 盘中 / 盘后
   const bucket = (time) => {
@@ -1683,7 +1726,13 @@ function renderDailyNews(d) {
   }).join('');
 
   document.getElementById('eventContent').innerHTML =
-    html || '<div style="padding:40px;color:var(--text-faint);text-align:center">暂无当日新闻</div>';
+    `<div class="news-search-bar">
+       <input type="text" id="newsSearch" value="${kw}" placeholder="🔍 输入关键字过滤新闻（标题/摘要/股票代码）…">
+     </div>` +
+    (html || '<div style="padding:40px;color:var(--text-faint);text-align:center">' + (kw ? '没有匹配「' + kw + '」的新闻' : '暂无当日新闻') + '</div>');
+
+  const box = document.getElementById('newsSearch');
+  if (box) box.addEventListener('input', (e) => renderDailyNews(d, e.target.value));
   document.querySelectorAll('#eventContent .news-stock[data-code]').forEach((el) => {
     el.addEventListener('click', (e) => { e.stopPropagation(); openKline(el.dataset.code, 'daily'); });
   });
@@ -1761,16 +1810,6 @@ function renderMarket(d) {
       </div>
     </div>`;
   }).join('');
-  const flowRows = (d.fund_flow || []).map((f) => {
-    const netCls = (v) => (v >= 0 ? 'num-up' : 'num-down');
-    return `<tr><td>${f.date}</td>
-      <td class="${netCls(f.main_net)}">${fmtYuan(f.main_net)}</td>
-      <td class="${netCls(f.super_net)}">${fmtYuan(f.super_net)}</td>
-      <td class="${netCls(f.big_net)}">${fmtYuan(f.big_net)}</td>
-      <td class="${netCls(f.medium_net)}">${fmtYuan(f.medium_net)}</td>
-      <td class="${netCls(f.small_net)}">${fmtYuan(f.small_net)}</td>
-      <td class="${netCls(f.main_net_pct)}">${f.main_net_pct.toFixed(2)}%</td></tr>`;
-  }).join('');
   document.getElementById('eventStats').innerHTML = `更新于 ${d.updated || '—'}`;
   document.getElementById('eventContent').innerHTML = `
     <div class="market-kline">
@@ -1785,17 +1824,9 @@ function renderMarket(d) {
         </div>
       </div>
       <div class="kline-chart" id="indexKlineChart">加载中…</div>
+      <div class="kline-legend-hint">MA5 / MA10 / MA20 / MA120 / MA250 均线 · ▲▼ 三角标记为跳空缺口</div>
     </div>
-    <div class="market-toolbar">
-      <button class="ghost-btn" id="marketReportBtn">📄 生成市场分析报告</button>
-    </div>
-    <div class="idx-grid">${cards || '<div style="padding:40px;color:var(--text-faint);text-align:center">暂无指数数据</div>'}</div>
-    <div class="flow-section">
-      <div class="flow-head">上证指数 · 资金流向</div>
-      <table class="event-table"><thead><tr><th>日期</th><th>主力净流入</th><th>超大单</th><th>大单</th><th>中单</th><th>小单</th><th>主力净占比</th></tr></thead><tbody>${flowRows || '<tr><td colspan="7" style="text-align:center;color:var(--text-faint);padding:30px">暂无资金流向数据</td></tr>'}</tbody></table>
-    </div>`;
-  const rb = document.getElementById('marketReportBtn');
-  if (rb) rb.addEventListener('click', () => buildMarketReport(d));
+    <div class="idx-grid">${cards || '<div style="padding:40px;color:var(--text-faint);text-align:center">暂无指数数据</div>'}</div>`;
   // K 线图：指数选择 + 级别切换 + 渲染
   bindKlineToolbar();
   renderIndexKline(state.marketIdx, state.marketTf);
@@ -1850,12 +1881,30 @@ function drawIndexKline(el, d) {
   if (state.marketChart) { state.marketChart.dispose(); state.marketChart = null; }
   const chart = echarts.init(el);
   state.marketChart = chart;
+  // 后端 kline: [date, open, close, high, low]
   const dates = d.kline.map((k) => k[0]);
-  const kdata = d.kline.map((k) => [k[1], k[2], k[3], k[4]]);   // [open, close, low, high]
+  const kdata = d.kline.map((k) => [k[1], k[2], k[4], k[3]]);   // candlestick: [open, close, low, high]
   const vols = d.volume.map((v) => ({
     value: v[1],
     itemStyle: { color: v[2] >= 0 ? '#f23645' : '#26a69a' },   // 涨红跌绿（A股）
   }));
+  // 均线 MA5/10/20/120/250（收盘价 k[2]）
+  const calcMA = (n) => dates.map((dt, i) => {
+    if (i < n - 1) return null;
+    let s = 0;
+    for (let j = i - n + 1; j <= i; j++) s += d.kline[j][2];
+    return +(s / n).toFixed(2);
+  });
+  // 跳空缺口：向上跳空（今低>昨高）红色▲；向下跳空（今高<昨低）绿色▼
+  const gapPoints = [];
+  for (let i = 1; i < d.kline.length; i++) {
+    const prev = d.kline[i - 1], cur = d.kline[i];
+    if (cur[4] > prev[3]) {
+      gapPoints.push({ coord: [cur[0], cur[4]], symbol: 'triangle', symbolRotate: 0, symbolSize: 9, itemStyle: { color: '#f23645' } });
+    } else if (cur[3] < prev[4]) {
+      gapPoints.push({ coord: [cur[0], cur[3]], symbol: 'triangle', symbolRotate: 180, symbolSize: 9, itemStyle: { color: '#26a69a' } });
+    }
+  }
   chart.setOption({
     animation: false,
     backgroundColor: 'transparent',
@@ -1874,10 +1923,11 @@ function drawIndexKline(el, d) {
           成交量 ${v ? (v[1] / 1e8).toFixed(2) + '亿手' : '—'}`;
       },
     },
+    legend: { data: [d.name, 'MA5', 'MA10', 'MA20', 'MA120', 'MA250'], textStyle: { color: '#999', fontSize: 11 }, top: 0 },
     axisPointer: { link: [{ xAxisIndex: 'all' }], label: { backgroundColor: '#777' } },
     grid: [
-      { left: 64, right: 24, top: 24, height: '56%' },
-      { left: 64, right: 24, top: '70%', height: '16%' },
+      { left: 64, right: 24, top: 30, height: '54%' },
+      { left: 64, right: 24, top: '69%', height: '15%' },
     ],
     xAxis: [
       { type: 'category', data: dates, gridIndex: 0, boundaryGap: true,
@@ -1900,7 +1950,13 @@ function drawIndexKline(el, d) {
       {
         name: d.name, type: 'candlestick', data: kdata,
         itemStyle: { color: '#f23645', color0: '#26a69a', borderColor: '#f23645', borderColor0: '#26a69a' },
+        markPoint: { data: gapPoints, label: { show: false } },
       },
+      { name: 'MA5', type: 'line', data: calcMA(5), smooth: true, showSymbol: false, lineStyle: { width: 1, color: '#f5a623' } },
+      { name: 'MA10', type: 'line', data: calcMA(10), smooth: true, showSymbol: false, lineStyle: { width: 1, color: '#4c8dff' } },
+      { name: 'MA20', type: 'line', data: calcMA(20), smooth: true, showSymbol: false, lineStyle: { width: 1, color: '#b06ce0' } },
+      { name: 'MA120', type: 'line', data: calcMA(120), smooth: true, showSymbol: false, lineStyle: { width: 1, color: '#26a69a' } },
+      { name: 'MA250', type: 'line', data: calcMA(250), smooth: true, showSymbol: false, lineStyle: { width: 1.5, color: '#f23645' } },
       { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: vols, barWidth: '60%' },
     ],
   });
@@ -1910,88 +1966,6 @@ function drawIndexKline(el, d) {
 }
 
 // ===================== 市场分析报告 =====================
-function buildMarketReport(d) {
-  const fmtWan = (v) => (v == null ? '—' : (v >= 1e4 ? (v / 1e4).toFixed(2) + '亿' : v.toFixed(0) + '万'));
-  const fmtHand = (v) => (v == null ? '—' : (v >= 1e4 ? (v / 1e4).toFixed(2) + '亿手' : v.toFixed(0) + '手'));
-  const fmtYuan = (v) => (v == null ? '—' : (v >= 1e8 ? (v / 1e8).toFixed(2) + '亿' : (v / 1e4).toFixed(0) + '万'));
-  const up = (v) => (v >= 0 ? '+' : '');
-  const chgCls = (v) => (v >= 0 ? '#f23645' : '#26a69a');   // 红涨绿跌（A股惯例）
-  const now = new Date().toLocaleString('zh-CN');
-
-  // 指数走势解读（含科创50 / 北证50 重点点评）
-  const idxComment = (ix) => {
-    const dir = ix.change_pct >= 0 ? '上涨' : '下跌';
-    const volChg = (ix.volume_today != null && ix.volume_yesterday)
-      ? ((ix.volume_today - ix.volume_yesterday) / ix.volume_yesterday * 100) : null;
-    const volTxt = (volChg == null) ? '成交量较昨日持平（数据暂缺）'
-      : (Math.abs(volChg) < 1 ? '成交量与昨日基本持平'
-        : (volChg > 0 ? `放量 ${volChg.toFixed(1)}%` : `缩量 ${Math.abs(volChg).toFixed(1)}%`));
-    return `收于 <b>${ix.price.toFixed(2)}</b>，${dir} <b style="color:${chgCls(ix.change_pct)}">${up(ix.change_pct)}${ix.change_pct.toFixed(2)}%</b>（${up(ix.change)}${ix.change.toFixed(2)} 点），${volTxt}，成交额 ${fmtWan(ix.amount_today_wan)}。`;
-  };
-  const find = (name) => (d.indices || []).find((i) => i.name === name);
-  const kc = find('科创50'), bj = find('北证50'), sh = find('上证指数');
-  const relative = (ix) => {
-    if (!ix || !sh) return '';
-    const gap = ix.change_pct - sh.change_pct;
-    return `相对上证指数${gap >= 0 ? '强' : '弱'} ${Math.abs(gap).toFixed(2)} 个百分点`;
-  };
-
-  const tableRows = (d.indices || []).map((ix) => {
-    const volChg = (ix.volume_today != null && ix.volume_yesterday)
-      ? ((ix.volume_today - ix.volume_yesterday) / ix.volume_yesterday * 100) : null;
-    return `<tr>
-      <td>${ix.name}</td><td>${ix.code}</td><td>${ix.price.toFixed(2)}</td>
-      <td style="color:${chgCls(ix.change_pct)}">${up(ix.change_pct)}${ix.change_pct.toFixed(2)}%</td>
-      <td>${ix.open.toFixed(2)}</td><td>${ix.high.toFixed(2)}</td><td>${ix.low.toFixed(2)}</td><td>${ix.pre_close.toFixed(2)}</td>
-      <td>${fmtHand(ix.volume_today)}</td><td>${fmtHand(ix.volume_yesterday)}</td>
-      <td>${volChg != null ? up(volChg) + volChg.toFixed(1) + '%' : '—'}</td><td>${fmtWan(ix.amount_today_wan)}</td></tr>`;
-  }).join('');
-
-  const flowRows = (d.fund_flow || []).map((f) => `<tr>
-    <td>${f.date}</td><td style="color:${chgCls(f.main_net)}">${up(f.main_net)}${fmtYuan(f.main_net)}</td>
-    <td style="color:${chgCls(f.super_net)}">${up(f.super_net)}${fmtYuan(f.super_net)}</td>
-    <td style="color:${chgCls(f.big_net)}">${up(f.big_net)}${fmtYuan(f.big_net)}</td>
-    <td style="color:${chgCls(f.medium_net)}">${up(f.medium_net)}${fmtYuan(f.medium_net)}</td>
-    <td style="color:${chgCls(f.small_net)}">${up(f.small_net)}${fmtYuan(f.small_net)}</td>
-    <td style="color:${chgCls(f.main_net_pct)}">${up(f.main_net_pct)}${f.main_net_pct.toFixed(2)}%</td></tr>`).join('');
-  const lastFlow = (d.fund_flow || [])[0];
-
-  const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
-  <title>市场分析报告</title>
-  <style>
-    body{font-family:"Microsoft YaHei",Arial,sans-serif;max-width:920px;margin:0 auto;padding:24px;color:#2b3440;line-height:1.7;background:#f7f9fc}
-    h1{font-size:22px} .meta{color:#8b96a8;font-size:13px;margin-bottom:16px}
-    h2{font-size:16px;border-left:4px solid #3b82f6;padding-left:10px;margin-top:26px}
-    table{width:100%;border-collapse:collapse;font-size:13px;margin:10px 0}
-    th,td{border:1px solid #dde3ec;padding:7px 9px;text-align:left}
-    th{background:#eef2f8}
-    .comment{background:#f0f4fa;border:1px solid #d8e0ec;border-radius:8px;padding:12px 14px;margin:8px 0}
-    .disclaimer{margin-top:28px;color:#8b96a8;font-size:12px;border-top:1px solid #dde3ec;padding-top:12px}
-  </style></head><body>
-  <h1>📊 市场分析报告</h1>
-  <div class="meta">生成时间：${now} · 行情更新：${d.updated || '—'}</div>
-
-  <h2>一、指数行情概览</h2>
-  <table><thead><tr><th>指数</th><th>代码</th><th>最新</th><th>涨跌幅</th><th>今开</th><th>最高</th><th>最低</th><th>昨收</th><th>成交量(今)</th><th>成交量(昨)</th><th>量比</th><th>成交额</th></tr></thead><tbody>${tableRows || '<tr><td colspan="12">暂无数据</td></tr>'}</tbody></table>
-
-  <h2>二、科创50 走势解读</h2>
-  <div class="comment">${kc ? `科创50 ${idxComment(kc)}${relative(kc)}。` : '科创50 数据暂缺。'}</div>
-
-  <h2>三、北证50 走势解读</h2>
-  <div class="comment">${bj ? `北证50 ${idxComment(bj)}${relative(bj)}。` : '北证50 数据暂缺。'}</div>
-
-  <h2>四、市场资金流向（上证指数）</h2>
-  <table><thead><tr><th>日期</th><th>主力净流入</th><th>超大单</th><th>大单</th><th>中单</th><th>小单</th><th>主力净占比</th></tr></thead><tbody>${flowRows || '<tr><td colspan="7">暂无资金流向数据</td></tr>'}</tbody></table>
-  <div class="comment">${lastFlow ? `主力资金${lastFlow.main_net >= 0 ? '净流入' : '净流出'} <b>${fmtYuan(lastFlow.main_net)}</b>（净占比 ${lastFlow.main_net_pct}%），超大单${lastFlow.super_net >= 0 ? '净流入' : '净流出'} ${fmtYuan(lastFlow.super_net)}，大单${lastFlow.big_net >= 0 ? '净流入' : '净流出'} ${fmtYuan(lastFlow.big_net)}，显示${lastFlow.main_net >= 0 ? '增量资金入场、做多情绪占优' : '资金离场、做多情绪偏谨慎'}。` : '资金流向数据暂缺。'}</div>
-
-  <div class="disclaimer">本报告由 A股量化分析工具自动生成，数据来自公开行情源（腾讯财经 / 东方财富），仅供学习研究参考，不构成任何投资建议。股市有风险，投资需谨慎。</div>
-  </body></html>`;
-
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  window.open(url, '_blank');
-  URL.revokeObjectURL(url);
-}
 
 // ===================== 生成筛选报告 =====================
 function generateReport() {
@@ -2086,25 +2060,19 @@ function renderKline(data) {
 
   const ma = (k) => candles.map((c) => c[k]);
 
-  // 形态高亮（markArea 阴影 + 图例）
-  const marks = (data.matches || []).map((m) => {
-    const idxs = m.candle_indexes || [m.index];
-    const firstDt = dates[idxs[0]] ?? dates[dates.length - 1];
-    const lastDt = dates[idxs[idxs.length - 1]] ?? firstDt;
-    const color = m.direction === 'bearish' ? C_DOWN : (m.direction === 'bullish' ? C_UP : C_ACCENT);
-    return {
-      name: m.name_zh,
-      coord: [{ xAxis: firstDt }, { xAxis: lastDt }],
-      itemStyle: { color: hexToRgba(color, 0.18), borderColor: color, borderWidth: 1 },
-      label: { show: true, position: 'insideTop', color, fontSize: 10, formatter: m.name_zh },
-    };
-  });
+  // 跳空缺口标记：向上跳空（今最低>昨最高）红色▲；向下跳空（今最高<昨最低）绿色▼
+  const gapPoints = [];
+  for (let i = 1; i < candles.length; i++) {
+    const prev = candles[i - 1], cur = candles[i];
+    if (cur.low > prev.high) {
+      gapPoints.push({ coord: [cur.dt, cur.low], symbol: 'triangle', symbolRotate: 0, symbolSize: 10, itemStyle: { color: C_UP } });
+    } else if (cur.high < prev.low) {
+      gapPoints.push({ coord: [cur.dt, cur.high], symbol: 'triangle', symbolRotate: 180, symbolSize: 10, itemStyle: { color: C_DOWN } });
+    }
+  }
 
-  const legendHtml = (data.matches || []).map((m) => {
-    const color = m.direction === 'bearish' ? C_DOWN : (m.direction === 'bullish' ? C_UP : C_ACCENT);
-    return `<span class="tag" style="color:${color};border:1px solid ${color}">${m.name_zh} ${m.date}</span>`;
-  }).join('');
-  document.getElementById('modalLegend').innerHTML = legendHtml || '<span style="color:var(--text-faint);font-size:12px">该级别近端未命中形态</span>';
+  document.getElementById('modalLegend').innerHTML =
+    '<span style="color:var(--text-faint);font-size:12px">MA5/10/15/20/120/250 均线 · ▲▼ 三角标记为跳空缺口</span>';
 
   const chart = echarts.init(document.getElementById('klineChart'), 'dark');
   state.klineChart = chart;
@@ -2144,7 +2112,7 @@ function renderKline(data) {
       {
         name: 'K线', type: 'candlestick', data: ohlc,
         itemStyle: { color: C_UP, color0: C_DOWN, borderColor: C_UP, borderColor0: C_DOWN },
-        markArea: { silent: true, data: marks },
+        markPoint: { data: gapPoints, label: { show: false } },
       },
       { name: 'MA5', type: 'line', data: ma('ma5'), smooth: true, showSymbol: false, lineStyle: { width: 1, color: '#f5a623' } },
       { name: 'MA10', type: 'line', data: ma('ma10'), smooth: true, showSymbol: false, lineStyle: { width: 1, color: '#4c8dff' } },

@@ -31,7 +31,6 @@ from .indicators import compute_ma
 from .data.source import get_source, get_quote_source
 from .data.cache import KlineCache
 from .data.universe import parse_codes
-from .patterns import detect_patterns
 from .jobs import JobManager
 from .selftest import run_selftest
 from .sync import get_sync_status, sync_incremental
@@ -524,13 +523,13 @@ def kline(code):
             "ma120": _round(ma120[i]), "ma250": _round(ma250[i]),
         })
 
-    matches = detect_patterns(bars)
+    matches = []   # 已移除「命中形态」检测：部分股票形态检测异常会导致 K 线接口失败
     return jsonify({
         "code": code,
         "timeframe": tf,
         "timeframe_zh": config.TIMEFRAMES[tf]["zh"],
         "candles": candles,
-        "matches": [m.to_dict() for m in matches],
+        "matches": matches,
     })
 
 

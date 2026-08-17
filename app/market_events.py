@@ -475,8 +475,11 @@ def _get_source():
 
 
 def _get_daily_bars(code: str):
-    """获取某股票日线（优先缓存），返回升序 Candle 列表。"""
-    bars = _cache.get(code, "daily")
+    """获取某股票日线（优先缓存，忽略过期：K 线追加式，旧缓存也可用于涨停次数推导）。
+
+    缓存命中（无论新旧）直接返回，避免涨停板/跌停连板逐只触发网络拉取导致页面长时间加载。
+    """
+    bars = _cache.get(code, "daily", ttl=None)
     if bars is None:
         bars = _get_source().get_bars(code, "daily", config.KLINE_OFFSET)
         if bars:
