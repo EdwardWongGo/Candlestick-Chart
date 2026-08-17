@@ -472,6 +472,10 @@ body {
   background: var(--bg-card); border: 1px solid var(--border); color: var(--text);
 }
 .src-input:focus { border-color: var(--accent); outline: none; }
+/* 同步期间锁定：下拉/输入框置灰不可操作 */
+.src-select:disabled, .src-input:disabled {
+  opacity: .5; cursor: not-allowed; pointer-events: auto;
+}
 .src-status { font-size: 12px; }
 .src-status.src-ok { color: var(--up); }
 .src-status.src-fail { color: var(--down); }

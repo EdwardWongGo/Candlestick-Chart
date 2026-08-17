@@ -20,6 +20,7 @@ from __future__ import annotations
 import csv
 import io
 import os
+import threading
 from datetime import datetime
 
 from flask import Flask, jsonify, request, send_file, send_from_directory
@@ -269,6 +270,17 @@ def sync_status():
     return jsonify(st)
 
 
+# 全局同步取消事件：POST /api/cancel-sync 置位，sync_incremental 的 cancel_cb 检查后中断
+_SYNC_CANCEL = threading.Event()
+
+
+@app.route("/api/cancel-sync", methods=["POST"])
+def cancel_sync():
+    """中断当前进行中的数据同步（返回后同步接口尽快以 cancelled=true 结束）。"""
+    _SYNC_CANCEL.set()
+    return jsonify({"ok": True})
+
+
 @app.route("/api/sync", methods=["POST"])
 def sync_now():
     """手动触发一次数据同步（默认同步本地全市场股票池，可指定数据服务器）。
@@ -279,6 +291,7 @@ def sync_now():
       - 自定义地址 "host:port"（通达信内网/专线行情源）
       - 空 → 使用 config.DEFAULT_SERVER_PRESET
     """
+    _SYNC_CANCEL.clear()   # 每次同步开始前重置取消标志
     body = request.get_json(silent=True) or {}
     codes = body.get("codes") or None
     timeframes = body.get("timeframes") or config.SYNC_TIMEFRAMES
@@ -316,7 +329,8 @@ def sync_now():
         return jsonify({"error": "股票池为空，无法同步", "synced": 0, "failed": 0, "empty": 0}), 400
     try:
         result = sync_incremental(codes, timeframes,
-                                  server=custom_server, source_kind=source_kind)
+                                  server=custom_server, source_kind=source_kind,
+                                  cancel_cb=lambda: _SYNC_CANCEL.is_set())
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": f"同步失败：{e}", "synced": 0, "failed": 0, "empty": 0}), 500

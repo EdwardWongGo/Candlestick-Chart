@@ -8,6 +8,7 @@ const API = {
   scanLast: '/api/scan/last',
   syncStatus: '/api/sync/status',
   sync: '/api/sync',
+  cancelSync: '/api/cancel-sync',
   history: '/api/history',
   historyItem: (id) => `/api/history/${id}`,
   kline: (code, tf) => `/api/kline/${code}?tf=${tf}`,
@@ -126,6 +127,7 @@ function bindEvents() {
   // 数据来源切换
   document.getElementById('dataSource').addEventListener('change', onDataSourceChange);
   document.getElementById('serverConnect').addEventListener('click', onServerConnect);
+  document.getElementById('serverCancel').addEventListener('click', onServerCancel);
   // 文件导入
   document.getElementById('importBtn').addEventListener('click', () => document.getElementById('importFile').click());
   document.getElementById('importFile').addEventListener('change', onImportFile);
@@ -642,6 +644,27 @@ function onDataSourceChange() {
   // 数据来源切换仅切换面板，不自动筛选（筛选统一由「开始筛选」按钮触发）
 }
 
+/**
+ * 同步期间锁定/恢复相关控件：
+ *  - 锁定：禁止「开始筛选」；禁止「数据来源」「数据服务器」下拉与自定义地址输入；
+ *           显示「⏹ 中断」按钮（此时「连接」按钮保持禁用）。
+ *  - 恢复：全部还原为可操作，隐藏中断按钮。
+ */
+function setSyncControls(locking) {
+  const ids = ['scanBtn', 'dataSource', 'serverPreset', 'serverAddr'];
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = locking;
+  }
+  const cancelBtn = document.getElementById('serverCancel');
+  if (cancelBtn) {
+    cancelBtn.classList.toggle('hidden', !locking);
+    if (!locking) { cancelBtn.disabled = false; cancelBtn.textContent = '⏹ 中断'; }
+  }
+  const connectBtn = document.getElementById('serverConnect');
+  if (connectBtn && !locking) connectBtn.disabled = false;
+}
+
 async function onServerConnect() {
   if (state.serverSyncing) return;
   // 数据服务器：预设键名；自定义选项填了地址则提交地址（host:port）
@@ -649,6 +672,7 @@ async function onServerConnect() {
   const addr = document.getElementById('serverAddr').value.trim();
   const server = (preset === 'custom' && addr) ? addr : preset;
   state.serverSyncing = true;
+  setSyncControls(true);   // 锁定「开始筛选」+ 来源/服务器下拉，显示中断按钮
   const statusEl = document.getElementById('serverStatus');
   const progressEl = document.getElementById('serverProgress');
   const btn = document.getElementById('serverConnect');
@@ -676,6 +700,10 @@ async function onServerConnect() {
     if (d.error) {
       statusEl.textContent = `❌ 同步失败：${d.error}`;
       statusEl.className = 'src-status src-fail';
+    } else if (d.cancelled) {
+      // 用户主动中断：安全退出，不刷新同步时间
+      statusEl.textContent = '⏹ 已中断同步，本地数据未更新';
+      statusEl.className = 'src-status src-fail';
     } else {
       const { synced = 0, failed = 0, empty = 0 } = d;
       if (synced > 0) {
@@ -699,9 +727,19 @@ async function onServerConnect() {
     statusEl.className = 'src-status src-fail';
   } finally {
     state.serverSyncing = false;
-    btn.disabled = false;
+    setSyncControls(false);   // 恢复全部控件：筛选按钮可用、下拉可切换、隐藏中断按钮
     progressEl.classList.add('hidden');
   }
+}
+
+async function onServerCancel() {
+  if (!state.serverSyncing) return;
+  const cancelBtn = document.getElementById('serverCancel');
+  if (cancelBtn) { cancelBtn.disabled = true; cancelBtn.textContent = '正在中断…'; }
+  try {
+    await fetch(API.cancelSync, { method: 'POST' });
+  } catch (e) { /* 即使通知失败，同步接口也会因超时/网络自行结束 */ }
+  // 不在此处复位状态：等待 onServerConnect 收到 cancelled 结果后统一恢复控件
 }
 
 async function loadHistory() {
