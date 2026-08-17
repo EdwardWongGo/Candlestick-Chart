@@ -1347,7 +1347,7 @@ async function loadEvent(tab) {
     document.getElementById('eventStats').textContent = '正在扫描全市场本地数据推导未封板，约需 1 分钟，请稍候…';
   }
   try {
-    // 涨停/跌停：标题旁内联展示今日/昨日封板率统计（随行情实时更新）
+    // 涨停/跌停：标题旁内联展示今日封板率统计（随行情实时更新）
     if (tab === 'zt' || tab === 'dt') {
       const dir = tab === 'zt' ? 'up' : 'down';
       try {
@@ -1915,10 +1915,9 @@ function renderTitleSealRate(dir, d) {
     const t = s || {};
     return `今日${kw}数${t.board_count ?? 0}，${kw}打开${t.opened_count ?? 0}，封板率${t.seal_rate != null ? t.seal_rate + '%' : '—'}`;
   };
-  const today = d.today || {}, yesterday = d.yesterday || {};
+  const today = d.today || {};
   el.innerHTML =
     `<div class="ts-line">${fmt(today)}</div>`
-    + `<div class="ts-line">昨日${kw}数${yesterday.board_count ?? 0}，${kw}打开${yesterday.opened_count ?? 0}，封板率${yesterday.seal_rate != null ? yesterday.seal_rate + '%' : '—'}</div>`
     + `<div class="ts-formula">封板率=封板${kw}数÷(封板${kw}数+${kw}打开数)，随行情实时更新</div>`;
 }
 
@@ -1944,8 +1943,7 @@ function renderOpened(dir, d) {
     </div>`;
   };
   document.getElementById('eventStats').innerHTML = `${kw} = 盘中触及${dir === 'up' ? '涨停' : '跌停'}但收盘未封住`;
-  document.getElementById('eventContent').innerHTML =
-    section('今日', d.today) + section('昨日', d.yesterday);
+  document.getElementById('eventContent').innerHTML = section('今日', d.today);
   document.querySelectorAll('#eventContent tr[data-code]').forEach((tr) => {
     tr.addEventListener('click', () => openKline(tr.dataset.code, 'daily'));
   });

@@ -16,7 +16,7 @@ from __future__ import annotations
 import random
 import time
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List
 
 import requests
 
@@ -580,21 +580,6 @@ def get_dt_ladder(date_dashed: str = None) -> dict:
     }
 
 
-def _prev_trade_date(today: str) -> Optional[str]:
-    """返回 today 的前一个交易日（从本地日线推导，跳过周末/节假日）。"""
-    try:
-        bars = _get_daily_bars("000001")
-        dates = [b.dt for b in bars]
-        if today in dates:
-            idx = dates.index(today)
-            return dates[idx - 1] if idx > 0 else None
-        for d in reversed(dates):
-            if d < today:
-                return d
-    except Exception:
-        pass
-    return None
-
 
 def get_unsealed(direction: str = "up", date_dashed: str = None) -> dict:
     """涨停打开/未封板：扫描本地股票池，推导指定交易日触板未封（涨停/跌停）的股票。
@@ -656,44 +641,36 @@ _unsealed_cache: dict = {}
 
 
 def get_seal_rate(direction: str = "up") -> dict:
-    """封板率：今日/昨日 = 封板(涨停/跌停) ÷ (封板 + 打开)。"""
+    """封板率（仅今日）= 封板(涨停/跌停) ÷ (封板 + 打开)。"""
     today = latest_trade_date()
-    yesterday = _prev_trade_date(today)
-    out = {}
-    for label, day in (("today", today), ("yesterday", yesterday)):
-        item = {"date": day, "board_count": 0, "opened_count": 0, "seal_rate": None}
-        if day:
-            try:
-                board = get_limit_board(direction, day)
-                opened = get_unsealed(direction, day)
-                b = board.get("count", 0)
-                o = opened.get("count", 0)
-                total = b + o
-                item["board_count"] = b
-                item["opened_count"] = o
-                item["seal_rate"] = round(b / total * 100, 1) if total else None
-            except Exception:
-                pass
-        out[label] = item
-    return out
+    item = {"date": today, "board_count": 0, "opened_count": 0, "seal_rate": None}
+    if today:
+        try:
+            board = get_limit_board(direction, today)
+            opened = get_unsealed(direction, today)
+            b = board.get("count", 0)
+            o = opened.get("count", 0)
+            total = b + o
+            item["board_count"] = b
+            item["opened_count"] = o
+            item["seal_rate"] = round(b / total * 100, 1) if total else None
+        except Exception:
+            pass
+    return {"today": item}
 
 
 def get_opened(direction: str = "up") -> dict:
-    """涨停/跌停打开：今日/昨日 盘中触及涨跌停但收盘未封住的股票列表。"""
+    """涨停/跌停打开（仅今日）：盘中触及涨跌停但收盘未封住的股票列表。"""
     today = latest_trade_date()
-    yesterday = _prev_trade_date(today)
-    out = {}
-    for label, day in (("today", today), ("yesterday", yesterday)):
-        item = {"date": day, "count": 0, "stocks": []}
-        if day:
-            try:
-                d = get_unsealed(direction, day)
-                item = {"date": d.get("date"), "count": d.get("count", 0),
-                        "stocks": d.get("stocks", [])}
-            except Exception:
-                pass
-        out[label] = item
-    return out
+    item = {"date": today, "count": 0, "stocks": []}
+    if today:
+        try:
+            d = get_unsealed(direction, today)
+            item = {"date": d.get("date"), "count": d.get("count", 0),
+                    "stocks": d.get("stocks", [])}
+        except Exception:
+            pass
+    return {"today": item}
 
 
 def _sina_news_all(day_start: datetime, day_end: datetime, max_pages: int = 25) -> List[dict]:
