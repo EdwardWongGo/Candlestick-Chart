@@ -1,89 +1,89 @@
 @echo off
-chcp 65001 >nul
+rem ±àÂë£ºGBK£¨Windows Ä¬ÈÏ´úÂëÒ³£©
 setlocal enabledelayedexpansion
-title Aè‚¡èœ¡çƒ›å›¾å½¢æ€ç­›é€‰å·¥å…· - ä¸€é”®å®‰è£…
+title A¹ÉÀ¯ÖòÍ¼ĞÎÌ¬É¸Ñ¡¹¤¾ß - Ò»¼ü°²×°
 cd /d "%~dp0"
 
 echo ==========================================
-echo    Aè‚¡èœ¡çƒ›å›¾å½¢æ€ç­›é€‰å·¥å…· Â· ä¸€é”®å®‰è£…
+echo    A¹ÉÀ¯ÖòÍ¼ĞÎÌ¬É¸Ñ¡¹¤¾ß ¡¤ Ò»¼ü°²×°
 echo ==========================================
 echo.
 
 REM ==========================================================
-REM 1. å‰ç½®æ£€æŸ¥ï¼šPython
+REM 1. Ç°ÖÃ¼ì²é£ºPython
 REM ==========================================================
-echo [1/5] æ£€æŸ¥ Python ç¯å¢ƒ...
+echo [1/5] ¼ì²é Python »·¾³...
 set "PY=python"
 %PY% --version >nul 2>nul
 if errorlevel 1 (
     echo.
-    echo   [é”™è¯¯] æœªæ£€æµ‹åˆ° Python å‘½ä»¤ã€‚
-    echo   è¯·å…ˆå®‰è£… Python 3.10 æˆ–æ›´é«˜ç‰ˆæœ¬ï¼š
-    echo     ä¸‹è½½åœ°å€: https://www.python.org/downloads/
-    echo     å®‰è£…æ—¶åŠ¡å¿…å‹¾é€‰ "Add Python to PATH"
+    echo   [´íÎó] Î´¼ì²âµ½ Python ÃüÁî¡£
+    echo   ÇëÏÈ°²×° Python 3.10 »ò¸ü¸ß°æ±¾£º
+    echo     ÏÂÔØµØÖ·: https://www.python.org/downloads/
+    echo     °²×°Ê±Îñ±Ø¹´Ñ¡ "Add Python to PATH"
     echo.
     pause
     exit /b 1
 )
 for /f "usebackq tokens=*" %%v in (`%PY% --version 2^>^&1`) do set "PYVER=%%v"
-echo   å·²æ£€æµ‹åˆ° %PYVER%
+echo   ÒÑ¼ì²âµ½ %PYVER%
 
 REM ==========================================================
-REM 2. åˆ›å»ºè™šæ‹Ÿç¯å¢ƒï¼ˆéš”ç¦»ä¾èµ–ï¼Œé¿å…æ±¡æŸ“ç³»ç»Ÿ Pythonï¼‰
+REM 2. ´´½¨ĞéÄâ»·¾³£¨¸ôÀëÒÀÀµ£¬±ÜÃâÎÛÈ¾ÏµÍ³ Python£©
 REM ==========================================================
 echo.
-echo [2/5] åˆ›å»ºè™šæ‹Ÿç¯å¢ƒï¼ˆ.venvï¼‰...
+echo [2/5] ´´½¨ĞéÄâ»·¾³£¨.venv£©...
 if exist ".venv\Scripts\python.exe" (
-    echo   è™šæ‹Ÿç¯å¢ƒå·²å­˜åœ¨ï¼Œè·³è¿‡åˆ›å»º
+    echo   ĞéÄâ»·¾³ÒÑ´æÔÚ£¬Ìø¹ı´´½¨
 ) else (
     %PY% -m venv .venv
     if errorlevel 1 (
-        echo   [é”™è¯¯] è™šæ‹Ÿç¯å¢ƒåˆ›å»ºå¤±è´¥ï¼Œè¯·æ£€æŸ¥ Python å®‰è£…æ˜¯å¦å®Œæ•´
+        echo   [´íÎó] ĞéÄâ»·¾³´´½¨Ê§°Ü£¬Çë¼ì²é Python °²×°ÊÇ·ñÍêÕû
         pause
         exit /b 1
     )
-    echo   è™šæ‹Ÿç¯å¢ƒåˆ›å»ºæˆåŠŸ
+    echo   ĞéÄâ»·¾³´´½¨³É¹¦
 )
 set "VPY=.venv\Scripts\python.exe"
 set "VPIP=.venv\Scripts\pip.exe"
 
 REM ==========================================================
-REM 3. å®‰è£…ä¾èµ–ï¼ˆä¼˜å…ˆå›½å†…é•œåƒï¼Œå¤±è´¥è‡ªåŠ¨å›é€€å®˜æ–¹æºï¼‰
+REM 3. °²×°ÒÀÀµ£¨ÓÅÏÈ¹úÄÚ¾µÏñ£¬Ê§°Ü×Ô¶¯»ØÍË¹Ù·½Ô´£©
 REM ==========================================================
 echo.
-echo [3/5] å®‰è£…ä¾èµ–ï¼ˆé¦–æ¬¡çº¦éœ€ 1~3 åˆ†é’Ÿï¼Œè¯·è€å¿ƒç­‰å¾…ï¼‰...
-echo   ä½¿ç”¨æ¸…å PyPI é•œåƒåŠ é€Ÿä¸‹è½½...
+echo [3/5] °²×°ÒÀÀµ£¨Ê×´ÎÔ¼Ğè 1~3 ·ÖÖÓ£¬ÇëÄÍĞÄµÈ´ı£©...
+echo   Ê¹ÓÃÇå»ª PyPI ¾µÏñ¼ÓËÙÏÂÔØ...
 "%VPIP%" install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple >nul 2>nul
 "%VPIP%" install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 if errorlevel 1 (
-    echo   [æç¤º] æ¸…åé•œåƒå®‰è£…å¤±è´¥ï¼Œå°è¯•å®˜æ–¹æº...
+    echo   [ÌáÊ¾] Çå»ª¾µÏñ°²×°Ê§°Ü£¬³¢ÊÔ¹Ù·½Ô´...
     "%VPIP%" install -r requirements.txt
     if errorlevel 1 (
         echo.
-        echo   [é”™è¯¯] ä¾èµ–å®‰è£…å¤±è´¥ï¼Œè¯·æ£€æŸ¥ç½‘ç»œè¿æ¥åé‡æ–°è¿è¡Œæœ¬è„šæœ¬
+        echo   [´íÎó] ÒÀÀµ°²×°Ê§°Ü£¬Çë¼ì²éÍøÂçÁ¬½ÓºóÖØĞÂÔËĞĞ±¾½Å±¾
         pause
         exit /b 1
     )
 )
-echo   ä¾èµ–å®‰è£…å®Œæˆ
+echo   ÒÀÀµ°²×°Íê³É
 
 REM ==========================================================
-REM 4. ç”Ÿæˆæ•°æ®ç›®å½•ä¸å¿…è¦æ–‡ä»¶
+REM 4. Éú³ÉÊı¾İÄ¿Â¼Óë±ØÒªÎÄ¼ş
 REM ==========================================================
 echo.
-echo [4/5] ç”Ÿæˆæ•°æ®ç›®å½•ï¼ˆdata\daily weekly monthlyï¼‰...
+echo [4/5] Éú³ÉÊı¾İÄ¿Â¼£¨data\daily weekly monthly£©...
 if not exist "data" mkdir "data"
 for %%d in (daily weekly monthly) do (
     if not exist "data\%%d" mkdir "data\%%d"
 )
 if not exist "data\README.md" (
-    echo # data ç›®å½• - æœ¬åœ°æ•°æ®å­˜æ”¾> "data\README.md"
-    echo æœ¬ç›®å½•å­˜æ”¾ç­›é€‰å·¥å…·çš„æœ¬åœ°æ•°æ®ï¼ˆK çº¿ç¼“å­˜ / è‚¡ç¥¨æ±  / åŒæ­¥è®°å½•ï¼‰ã€‚>> "data\README.md"
-    echo ç”±ä¸€é”®å®‰è£…è„šæœ¬è‡ªåŠ¨åˆ›å»ºã€‚>> "data\README.md"
+    echo # data Ä¿Â¼ - ±¾µØÊı¾İ´æ·Å> "data\README.md"
+    echo ±¾Ä¿Â¼´æ·ÅÉ¸Ñ¡¹¤¾ßµÄ±¾µØÊı¾İ£¨K Ïß»º´æ / ¹ÉÆ±³Ø / Í¬²½¼ÇÂ¼£©¡£>> "data\README.md"
+    echo ÓÉÒ»¼ü°²×°½Å±¾×Ô¶¯´´½¨¡£>> "data\README.md"
 )
-echo   æ•°æ®ç›®å½•å°±ç»ª
+echo   Êı¾İÄ¿Â¼¾ÍĞ÷
 echo.
-echo   æ£€æŸ¥é¡¹ç›®æ–‡ä»¶å®Œæ•´æ€§...
+echo   ¼ì²éÏîÄ¿ÎÄ¼şÍêÕûĞÔ...
 set "MISSING="
 if not exist "run.py"            set "MISSING=%MISSING% run.py"
 if not exist "config.py"         set "MISSING=%MISSING% config.py"
@@ -91,30 +91,30 @@ if not exist "requirements.txt"  set "MISSING=%MISSING% requirements.txt"
 if not exist "web\index.html"    set "MISSING=%MISSING% web\index.html"
 if not exist "app\server.py"     set "MISSING=%MISSING% app\server.py"
 if defined MISSING (
-    echo   [è­¦å‘Š] ä»¥ä¸‹å¿…è¦æ–‡ä»¶ç¼ºå¤±ï¼Œç¨‹åºå¯èƒ½æ— æ³•è¿è¡Œï¼š%MISSING%
-    echo   è¯·ç¡®è®¤æ˜¯ä» GitHub å®Œæ•´ä¸‹è½½/å…‹éš†çš„é¡¹ç›®ç›®å½•ã€‚
+    echo   [¾¯¸æ] ÒÔÏÂ±ØÒªÎÄ¼şÈ±Ê§£¬³ÌĞò¿ÉÄÜÎŞ·¨ÔËĞĞ£º%MISSING%
+    echo   ÇëÈ·ÈÏÊÇ´Ó GitHub ÍêÕûÏÂÔØ/¿ËÂ¡µÄÏîÄ¿Ä¿Â¼¡£
 ) else (
-    echo   é¡¹ç›®æ–‡ä»¶å®Œæ•´
+    echo   ÏîÄ¿ÎÄ¼şÍêÕû
 )
 
 REM ==========================================================
-REM 5. éªŒè¯å®‰è£…ï¼ˆå½¢æ€å¼•æ“è‡ªæ£€ï¼‰
+REM 5. ÑéÖ¤°²×°£¨ĞÎÌ¬ÒıÇæ×Ô¼ì£©
 REM ==========================================================
 echo.
-echo [5/5] è¿è¡Œå½¢æ€å¼•æ“è‡ªæ£€ï¼ŒéªŒè¯å®‰è£…...
-"%VPY%" -c "import sys; sys.path.insert(0,'.'); from app.selftest import run_selftest; r=run_selftest(); print('   è‡ªæ£€ç»“æœ: ' + str(r['passed']) + '/' + str(r['total']) + ' é€šè¿‡')"
+echo [5/5] ÔËĞĞĞÎÌ¬ÒıÇæ×Ô¼ì£¬ÑéÖ¤°²×°...
+"%VPY%" -c "import sys; sys.path.insert(0,'.'); from app.selftest import run_selftest; r=run_selftest(); print('   ×Ô¼ì½á¹û: ' + str(r['passed']) + '/' + str(r['total']) + ' Í¨¹ı')"
 if errorlevel 1 (
-    echo   [è­¦å‘Š] è‡ªæ£€è¿è¡Œå¼‚å¸¸ï¼Œè¯·æŸ¥çœ‹ä¸Šæ–¹é”™è¯¯ä¿¡æ¯
+    echo   [¾¯¸æ] ×Ô¼ìÔËĞĞÒì³££¬Çë²é¿´ÉÏ·½´íÎóĞÅÏ¢
 ) else (
-    echo   è‡ªæ£€é€šè¿‡ï¼Œå®‰è£…æ­£å¸¸
+    echo   ×Ô¼ìÍ¨¹ı£¬°²×°Õı³£
 )
 
 echo.
 echo ==========================================
-echo    å®‰è£…å®Œæˆï¼
+echo    °²×°Íê³É£¡
 echo.
-echo    ä¸‹ä¸€æ­¥ï¼šåŒå‡»ã€Œå¯åŠ¨ç­›é€‰å·¥å…·.batã€å¯åŠ¨å·¥å…·
-echo    æˆ–å‘½ä»¤è¡Œè¿è¡Œ: .venv\Scripts\python run.py
+echo    ÏÂÒ»²½£ºË«»÷¡¸Æô¶¯É¸Ñ¡¹¤¾ß.bat¡¹Æô¶¯¹¤¾ß
+echo    »òÃüÁîĞĞÔËĞĞ: .venv\Scripts\python run.py
 echo ==========================================
 echo.
 pause
