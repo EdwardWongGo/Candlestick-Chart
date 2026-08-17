@@ -18,12 +18,6 @@ data/*
 # ---- 工作区数据（个人记忆，不入库） ----
 .workbuddy/
 
-# ---- 一键部署自动生成（便携运行环境 / 调试日志，均不入库） ----
-runtime/
-launcher_debug.log
-server.log
-__pycache__/
-
 # ---- 虚拟环境 / 依赖 ----
 .venv/
 venv/
