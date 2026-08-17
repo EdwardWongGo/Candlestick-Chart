@@ -15,10 +15,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
 import sys
 import threading
 import webbrowser
+
+# 确保本文件所在目录在模块搜索路径中。
+# 用「便携 / 嵌入版 Python」启动时，项目目录不会自动进入 sys.path，
+# 这会导致 import config / import app 失败、程序一启动就退出（黑窗口闪退）。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import config
 
