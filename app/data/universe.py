@@ -111,8 +111,8 @@ class Universe:
     # ------------------------------------------------------------------
     def from_mootdx(self) -> "Universe":
         """从通达信拉取全市场 A 股列表（沪深，可选北交所）。"""
-        from mootdx.quotes import Quotes
-        client = Quotes.factory(market="std")
+        from .source import get_mootdx_client
+        client = get_mootdx_client()
         codes: List[str] = []
         names: dict = {}
 

@@ -285,7 +285,15 @@ def sync_now():
         codes = u.codes
     else:
         from .data.universe import load_universe
-        codes = load_universe().codes
+        try:
+            codes = load_universe().codes
+        except Exception as e:
+            return jsonify({
+                "error": f"获取股票池失败（请确认网络可访问通达信行情服务器）：{e}",
+                "synced": 0, "failed": 0,
+            }), 500
+    if not codes:
+        return jsonify({"error": "股票池为空，无法同步", "synced": 0, "failed": 0}), 400
     try:
         result = sync_incremental(codes, timeframes, server=custom_server)
         return jsonify(result)

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>使用说明 - A股蜡烛图形态筛选工具</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --card: #ffffff;
+      --text: #1f2329;
+      --sub: #5b6472;
+      --brand: #c0392b;
+      --brand-soft: #fdecea;
+      --green: #1e8449;
+      --border: #e6e8eb;
+      --accent: #b03a2e;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.8;
+      padding: 32px 16px;
+    }
+    .wrap { max-width: 820px; margin: 0 auto; }
+    header {
+      background: linear-gradient(135deg, #a93226, #c0392b);
+      color: #fff;
+      border-radius: 14px;
+      padding: 30px 32px;
+      margin-bottom: 24px;
+    }
+    header h1 { font-size: 26px; margin-bottom: 8px; }
+    header p { opacity: 0.92; font-size: 15px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px 28px;
+      margin-bottom: 18px;
+    }
+    .card h2 {
+      font-size: 19px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step {
+      display: flex;
+      gap: 14px;
+      margin: 14px 0;
+    }
+    .step .num {
+      flex: 0 0 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: var(--brand);
+      color: #fff;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+    }
+    .step p { color: var(--text); }
+    .tip {
+      background: #fff8e6;
+      border: 1px solid #f0e0b0;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-top: 12px;
+      font-size: 14px;
+      color: #7a5c00;
+    }
+    .warn {
+      background: var(--brand-soft);
+      border: 1px solid #f3c2bd;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-top: 12px;
+      font-size: 14px;
+      color: var(--accent);
+    }
+    .features { list-style: none; }
+    .features li {
+      padding: 10px 0;
+      border-bottom: 1px dashed var(--border);
+      font-size: 15px;
+    }
+    .features li:last-child { border-bottom: none; }
+    .features b { color: var(--brand); }
+    .tag {
+      display: inline-block;
+      background: var(--brand-soft);
+      color: var(--accent);
+      font-size: 12px;
+      padding: 2px 10px;
+      border-radius: 12px;
+      margin-left: 6px;
+    }
+    code {
+      background: #f0f1f3;
+      padding: 2px 8px;
+      border-radius: 5px;
+      font-size: 14px;
+      font-family: Consolas, "Courier New", monospace;
+    }
+    footer { text-align: center; color: var(--sub); font-size: 13px; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>🕯 A股蜡烛图形态筛选工具</h1>
+      <p>这份说明用大白话讲清楚怎么用，不需要任何电脑专业知识。</p>
+    </header>
+
+    <div class="card">
+      <h2>一、怎么打开它</h2>
+      <div class="step"><div class="num">1</div><p>找到程序文件夹里的 <code>一键启动.bat</code> 文件。</p></div>
+      <div class="step"><div class="num">2</div><p>用鼠标<strong>双击</strong>它。</p></div>
+      <div class="step"><div class="num">3</div><p>屏幕上会弹出一个黑窗口，里面会显示「正在准备」「正在启动」等文字。<strong>这是正常的，不用管它。</strong></p></div>
+      <div class="step"><div class="num">4</div><p>等一小会儿，你的浏览器会自动打开一个页面，这就是程序的主界面了。</p></div>
+      <div class="tip">💡 第一次打开时，程序会自动下载一些必要的文件，可能会慢一些（约几分钟）。请保持网络畅通，耐心等待，期间不要关掉黑窗口。</div>
+    </div>
+
+    <div class="card">
+      <h2>二、第一次打开要注意什么</h2>
+      <div class="step"><div class="num">1</div><p>浏览器如果弹出「允许访问网络」之类的提示，点<strong>允许</strong>即可。</p></div>
+      <div class="step"><div class="num">2</div><p>打开后如果看到「数据加载中」，请稍等片刻，程序正在从网上抓取最新行情。</p></div>
+      <div class="step"><div class="num">3</div><p>如果长时间显示不出数据，先检查电脑能不能正常上网。</p></div>
+      <div class="tip">💡 所有数据都来自公开的免费行情接口，正常网络环境下都能加载出来。</div>
+    </div>
+
+    <div class="card">
+      <h2>三、主界面能看什么</h2>
+      <p style="margin-bottom:8px;">打开后，顶部有 7 个标签页，点一下就能切换：</p>
+      <ul class="features">
+        <li>📊 <b>形态筛选</b> —— 选好条件，点「开始筛选」，找出符合蜡烛图形态的股票</li>
+        <li>📈 <b>涨停板</b> —— 看今天哪些股票涨停了</li>
+        <li>📉 <b>跌停板</b> —— 看今天哪些股票跌停了</li>
+        <li>🪜 <b>连板天梯</b> —— 看哪些股票连续涨停/跌停</li>
+        <li>🐉 <b>龙虎榜</b> —— 看大资金和机构在买卖哪些股票</li>
+        <li>🔥 <b>题材热点</b> —— 看最近市场在炒作什么题材</li>
+        <li>📰 <b>周末热点</b> —— 看周末和盘后的重要新闻</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>四、怎么关掉它</h2>
+      <div class="step"><div class="num">1</div><p>想停止使用时，直接<strong>关掉那个黑窗口</strong>即可，程序就会停止。</p></div>
+      <div class="step"><div class="num">2</div><p>下次再用时，重新双击 <code>一键启动.bat</code> 就行。</p></div>
+      <div class="warn">⚠️ 黑窗口是程序在运行的标志，<strong>不要</strong>把它当成错误关掉后又说程序打不开 —— 关掉它程序就停了。</div>
+    </div>
+
+    <div class="card">
+      <h2>五、常见问题</h2>
+      <ul class="features">
+        <li><b>打开后提示「连接失败」？</b><br>多半是网络问题，检查电脑能不能上网，然后刷新页面重试。</li>
+        <li><b>黑窗口一闪就消失了？</b><br>说明运行环境没准备好，重新双击 <code>一键启动.bat</code>，并保持网络畅通。</li>
+        <li><b>浏览器没自动打开？</b><br>手动打开浏览器，在地址栏输入 <code>127.0.0.1:8000</code> 回车即可。</li>
+        <li><b>数据是空的？</b><br>可能是非交易时间（收盘后部分数据才更新），换个时间再看。</li>
+      </ul>
+    </div>
+
+    <footer>如遇到本说明没有覆盖的问题，请截图黑窗口内容并反馈给开发人员。</footer>
+  </div>
+</body>
+</html>

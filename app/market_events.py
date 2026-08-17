@@ -173,9 +173,14 @@ def get_limit_board(direction: str, date_dashed: str = None) -> dict:
     actual = _yyyymmdd_to_dashed(qdate) if qdate else date_dashed
     reason_map = fetch_reasons(actual) if direction == "up" else {}
     stocks = _pool_to_stocks(pool, reason_map)
-    # 涨停板附加 一年/半年/一月涨停次数（本地日线推导）
+    # 涨停板附加 一年/半年/一月涨停次数（本地日线推导）。
+    # 该统计依赖通达信本地 K 线，失败时不应影响涨停板主数据，降级为 None。
     if direction == "up":
-        stocks = _add_limit_stats(stocks)
+        try:
+            stocks = _add_limit_stats(stocks)
+        except Exception:
+            for s in stocks:
+                s["limit_1y"] = s["limit_6m"] = s["limit_1m"] = None
     return {
         "date": actual,
         "direction": direction,
@@ -260,9 +265,32 @@ def _em_datacenter(report_name: str, filter_str: str, page_size: int = 500,
     return (d.get("result") or {}).get("data") or []
 
 
+def last_completed_trade_date(max_back: int = 15) -> str:
+    """最近一个「已收盘」交易日（以龙虎榜盘后发布数据为准）。
+
+    与 latest_trade_date 的区别：盘中时 latest_trade_date 会返回「今天」，
+    但龙虎榜、周末热点等盘后数据当天尚未发布，需回退到上一个已收盘交易日。
+    """
+    d = datetime.now()
+    for _ in range(max_back):
+        ds = d.strftime("%Y-%m-%d")
+        data = _em_datacenter(
+            "RPT_DAILYBILLBOARD_DETAILSNEW",
+            filter_str=f"(TRADE_DATE>='{ds}')(TRADE_DATE<='{ds}')",
+            page_size=1,
+            sort_columns="TRADE_DATE", sort_types="-1",
+        )
+        if data:
+            return str(data[0].get("TRADE_DATE", ""))[:10] or ds
+        d -= timedelta(days=1)
+    # 兜底：返回最近一个自然日
+    return datetime.now().strftime("%Y-%m-%d")
+
+
 def get_dragon_tiger(date_dashed: str = None) -> dict:
     """全市场龙虎榜（当日上榜股票 + 上榜原因 + 买卖净额 + 换手）。"""
-    date_dashed = date_dashed or latest_trade_date()
+    # 龙虎榜盘后发布：未指定日期时用「最近已收盘交易日」，避免盘中查当天为空
+    date_dashed = date_dashed or last_completed_trade_date()
     data = _em_datacenter(
         "RPT_DAILYBILLBOARD_DETAILSNEW",
         filter_str=f"(TRADE_DATE>='{date_dashed}')(TRADE_DATE<='{date_dashed}')",
@@ -454,15 +482,24 @@ def _universe_names(codes: List[str]) -> dict:
 
 
 def _add_limit_stats(stocks: List[dict]) -> List[dict]:
-    """给涨停板股票附加 一年/半年/一月涨停次数（本地日线推导）。"""
+    """给涨停板股票附加 一年/半年/一月涨停次数（本地日线推导）。
+
+    当本地 K 线源不可用时（连续多只取不到 K 线）快速熔断，避免逐只重复超时等待。
+    """
+    empty_streak = 0
     for s in stocks:
+        if empty_streak >= 3:
+            s["limit_1y"] = s["limit_6m"] = s["limit_1m"] = None
+            continue
         bars = _get_daily_bars(s["code"])
         name = s.get("name", "")
         if bars and len(bars) >= 2:
+            empty_streak = 0
             s["limit_1y"] = la.count_limit_up(bars, s["code"], name, days=245)
             s["limit_6m"] = la.count_limit_up(bars, s["code"], name, days=122)
             s["limit_1m"] = la.count_limit_up(bars, s["code"], name, days=21)
         else:
+            empty_streak += 1
             s["limit_1y"] = s["limit_6m"] = s["limit_1m"] = None
     return stocks
 
@@ -537,7 +574,7 @@ def get_unsealed(direction: str = "up", date_dashed: str = None) -> dict:
 
 def get_weekend_news(limit: int = 200) -> dict:
     """周末热点新闻：筛选最近交易日收盘后到当前的新闻（含节假日边界）。"""
-    last_trade = latest_trade_date()
+    last_trade = last_completed_trade_date()   # 用已收盘交易日，避免盘中 window_start 落在未来
     window_start = datetime.strptime(last_trade + " 15:00:00", "%Y-%m-%d %H:%M:%S")
     now = datetime.now()
     all_news = get_news(limit).get("news", [])
