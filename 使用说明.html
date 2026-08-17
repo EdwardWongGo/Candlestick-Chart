@@ -53,28 +53,36 @@
 
 <!-- ========== 环境准备 ========== -->
 <div class="card">
-  <h2>一、环境准备（先确认这些）</h2>
+  <h2>一、一键安装（推荐，只需运行一次）</h2>
+  <p>项目自带 <code>install.bat</code> 一键安装脚本，自动完成：Python 环境检查、虚拟环境创建、依赖包安装、数据目录生成、安装自检验证。运行一次即可完成全部设置。</p>
   <ol class="steps">
-    <li><b>一台能上网的 Windows 电脑</b>（Win10 / Win11 均可）。</li>
-    <li><b>已安装 Python 3.10 或更高版本</b>：
-      <br>打开命令行（按 Win+R，输入 <code>cmd</code> 回车），输入 <code>python --version</code>，
-      <br>如果显示 <code>Python 3.x.x</code> 就说明已安装；如果提示「不是内部或外部命令」，请先到
+    <li><b>前置条件</b>：一台能上网的 Windows 电脑（Win10 / Win11）+ 已安装 Python 3.10 或更高版本。
+      <br>检查方法：按 Win+R 输入 <code>cmd</code> 回车，输入 <code>python --version</code>，
+      <br>若显示 <code>Python 3.x.x</code> 即可；若提示「不是内部或外部命令」，请先到
       <b>python.org/downloads</b> 下载安装（安装时勾选 <b>Add Python to PATH</b>）。
     </li>
-    <li><b>已安装程序需要的依赖包</b>（只需第一次做一次）：
-      <div class="box">cd 项目目录
-pip install -r requirements.txt</div>
-      如果出现 <code>Requirement already satisfied</code> 也属于正常，说明之前装过。
-    </li>
+    <li>进入项目目录，<b>双击 <code>install.bat</code></b>，按提示等待脚本执行（首次约需 1~3 分钟）。</li>
+    <li>看到「安装完成！」即成功。接着双击 <b>启动筛选工具.bat</b> 即可运行工具。</li>
   </ol>
-  <div class="tip">💡 什么是「项目目录」？就是本说明所在的那个文件夹。进入文件夹后，在地址栏输入 <code>cmd</code> 回车，可以直接打开命令行并定位到该目录。</div>
+  <div class="tip">💡 脚本会自动完成以下事情：
+    <br>· 检测 Python 版本（低于 3.10 会提示先升级）
+    <br>· 创建虚拟环境 <code>.venv</code>（依赖与系统隔离，互不干扰）
+    <br>· 安装全部依赖包（默认走清华 PyPI 国内镜像加速，失败自动回退官方源）
+    <br>· 生成 <code>data\daily weekly monthly</code> 数据目录
+    <br>· 运行形态引擎自检（17 项用例），自检通过即安装正常</div>
+  <div class="tip">💡 手动安装（可选）：打开命令行进入项目目录，执行
+    <div class="box">pip install -r requirements.txt</div>
+    出现 <code>Requirement already satisfied</code> 属正常，说明之前装过。
+  </div>
 </div>
 
 <!-- ========== 启动 ========== -->
 <div class="card">
   <h2>二、启动程序（3 步）</h2>
   <ol class="steps">
-    <li>进入项目目录，双击 <b>启动筛选工具.bat</b>（或打开命令行运行 <code>python run.py</code>）。</li>
+    <li>进入项目目录，双击 <b>启动筛选工具.bat</b>。
+      <br>脚本会自动优先使用一键安装创建的虚拟环境（<code>.venv</code>），其次回退到系统 Python；
+      <br>也可手动运行 <code>.venv\Scripts\python run.py</code> 或 <code>python run.py</code>。</li>
     <li>稍等 1~3 秒，浏览器会自动打开工具页面（网址 <code>http://127.0.0.1:8000</code>）。
       <br>如果浏览器没有自动打开，请手动在浏览器地址栏输入 <code>http://127.0.0.1:8000</code> 回车。</li>
     <li>看到「数据来源」「开始筛选」等界面即启动成功。</li>
@@ -161,6 +169,24 @@ pip install -r requirements.txt</div>
   <details>
     <summary>8. 怎么停止程序？</summary>
     关闭启动时出现的黑色命令行窗口即可。或在命令行按 <code>Ctrl+C</code>。
+  </details>
+
+  <details>
+    <summary>9. 一键安装脚本（install.bat）提示「未检测到 Python」？</summary>
+    说明电脑未安装 Python 或未加入 PATH。先到 <b>python.org/downloads</b> 安装 Python 3.10+
+    （务必勾选 <b>Add Python to PATH</b>），再重新双击 <code>install.bat</code>。
+  </details>
+
+  <details>
+    <summary>10. 安装脚本下载依赖很慢或报错？</summary>
+    脚本默认使用清华 PyPI 国内镜像加速，失败会自动回退官方源。若两者都失败，通常是网络问题：
+    检查网络后重新运行 <code>install.bat</code> 即可，已下载好的包不会重复下载。
+  </details>
+
+  <details>
+    <summary>11. 重复运行安装脚本安全吗？</summary>
+    安全。脚本设计为可重复执行（幂等）：虚拟环境已存在会跳过创建、依赖已安装会显示
+    <code>already satisfied</code>、数据目录已存在会跳过，不会破坏现有环境。
   </details>
 </div>
 
