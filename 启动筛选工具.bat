@@ -11,8 +11,6 @@ REM  基础配置
 REM ==========================================================
 set "LOG_FILE=%~dp0启动日志.log"
 set "PORT=8000"
-set "PY=.venv\Scripts\python.exe"
-if not exist "%PY%" set "PY=python"
 
 REM 启用控制台快速编辑模式（可用鼠标选中复制窗口内文字）
 reg add "HKCU\Console" /v QuickEdit /t REG_DWORD /d 1 /f >nul 2>&1
@@ -22,8 +20,6 @@ REM  日志初始化（每次启动覆盖旧日志，保留本次完整输出）
 REM ==========================================================
 > "%LOG_FILE%" echo [%date% %time%] ===== 启动 A股蜡烛图形态筛选工具 =====
 >> "%LOG_FILE%" echo 启动目录: %~dp0
->> "%LOG_FILE%" echo Python:   %PY%
->> "%LOG_FILE%" echo 端口:     %PORT%
 >> "%LOG_FILE%" echo ============================================
 
 echo ==========================================
@@ -32,33 +28,44 @@ echo ==========================================
 echo.
 
 REM ==========================================================
-REM  1. 检查 Python 环境
+REM  [1/4] Python 探测：依次测试候选，取第一个“存在且有依赖”的
+REM   候选1: 项目虚拟环境（install.bat 创建）
+REM   候选2: 本机工作环境（%USERPROFILE%\.workbuddy\binaries\...，存在才试）
+REM   候选3: 系统 PATH 中的 python
 REM ==========================================================
-"%PY%" --version >nul 2>&1
-if errorlevel 1 goto :no_python
-for /f "usebackq tokens=*" %%v in (`"%PY%" --version 2^>^&1`) do set "PYVER=%%v"
-echo [1/4] Python 环境：!PYVER!
->> "%LOG_FILE%" echo [1/4] Python 环境：!PYVER!
+set "PY="
+set "CAND1=.venv\Scripts\python.exe"
+set "CAND2=%USERPROFILE%\.workbuddy\binaries\python\envs\default\Scripts\python.exe"
+set "CAND3=python"
+
+if exist "%CAND1%" (
+    "%CAND1%" -c "import flask,mootdx,pandas" >nul 2>&1
+    if not errorlevel 1 set "PY=%CAND1%"
+)
+if not defined PY if exist "%CAND2%" (
+    "%CAND2%" -c "import flask,mootdx,pandas" >nul 2>&1
+    if not errorlevel 1 set "PY=%CAND2%"
+)
+if not defined PY (
+    %CAND3% -c "import flask,mootdx,pandas" >nul 2>&1
+    if not errorlevel 1 set "PY=%CAND3%"
+)
+
+if not defined PY goto :no_python_ready
+>> "%LOG_FILE%" echo [1/4] 使用 Python: !PY!
+echo [1/4] Python 环境已就绪：!PY!
 
 REM ==========================================================
-REM  2. 检查依赖包
-REM ==========================================================
-"%PY%" -c "import flask, mootdx, pandas" >nul 2>&1
-if errorlevel 1 goto :no_deps
-echo [2/4] 依赖包已就绪（flask / mootdx / pandas）
->> "%LOG_FILE%" echo [2/4] 依赖包已就绪
-
-REM ==========================================================
-REM  3. 检查项目文件
+REM  [2/4] 检查项目文件
 REM ==========================================================
 if not exist "run.py"    goto :no_files
 if not exist "config.py" goto :no_files
 if not exist "web\index.html" goto :no_files
-echo [3/4] 项目文件完整
->> "%LOG_FILE%" echo [3/4] 项目文件完整
+echo [2/4] 项目文件完整
+>> "%LOG_FILE%" echo [2/4] 项目文件完整
 
 REM ==========================================================
-REM  4. 端口检查 + 启动服务
+REM  [3/4] 端口检查（占用则自动改用 8001）
 REM ==========================================================
 netstat -ano | findstr ":%PORT%" | findstr "LISTENING" >nul 2>&1
 if not errorlevel 1 (
@@ -66,6 +73,10 @@ if not errorlevel 1 (
     >> "%LOG_FILE%" echo [提示] 端口 %PORT% 被占用，改用 8001
     set "PORT=8001"
 )
+
+REM ==========================================================
+REM  [4/4] 启动服务（后台运行，输出写日志）
+REM ==========================================================
 echo [4/4] 正在启动服务（端口 !PORT!），运行日志写入：!LOG_FILE!
 >> "%LOG_FILE%" echo [4/4] 启动服务（端口 !PORT!）
 >> "%LOG_FILE%" echo --------------------------------------------
@@ -87,18 +98,11 @@ echo [错误] 服务启动超时，未能监听端口 !PORT!
 >> "%LOG_FILE%" echo [错误] 服务启动超时，未能监听端口 !PORT!
 goto :fail
 
-:no_python
-echo [错误] 未找到可用的 Python 环境（!PY!）
-echo        请先双击 install.bat 一键安装，或安装 Python 3.10 及以上
-echo        下载地址：https://www.python.org/downloads/
->> "%LOG_FILE%" echo [错误] 未找到 Python 环境（!PY!）
->> "%LOG_FILE%" echo [提示] 请先运行 install.bat 一键安装
-goto :fail
-
-:no_deps
-echo [错误] 依赖包未安装（flask / mootdx / pandas）
-echo        请先双击 install.bat 一键安装依赖
->> "%LOG_FILE%" echo [错误] 依赖包未安装（flask / mootdx / pandas）
+:no_python_ready
+echo [错误] 未找到安装了依赖（flask / mootdx / pandas）的 Python 环境
+echo        请先双击 install.bat 一键安装（自动创建虚拟环境并装依赖）
+echo        或安装 Python 3.10+ 后重新运行 install.bat
+>> "%LOG_FILE%" echo [错误] 未找到可用 Python 或依赖未安装，请先运行 install.bat
 goto :fail
 
 :no_files
