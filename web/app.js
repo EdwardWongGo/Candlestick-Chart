@@ -637,15 +637,22 @@ async function onServerConnect() {
   statusEl.textContent = '连接中…';
   statusEl.className = 'src-status';
   progressEl.classList.remove('hidden');
-  document.getElementById('serverProgressText').textContent = '同步中（全市场约需数十秒）…';
+  document.getElementById('serverProgressText').textContent = '同步中（全市场 × 日/周/月三级别，约需数分钟）…';
   btn.disabled = true;
 
   try {
-    const tfs = [...document.querySelectorAll('#timeframeChips .chip.active')].map((c) => c.dataset.key);
+    // 同步级别：默认日/周/月全选（界面「同步级别」勾选可配置）；
+    // 一个都没勾选时回退到默认三级别，保证本地数据完整。
+    const tfs = [];
+    for (const [key, id] of [['daily', 'syncLvDaily'], ['weekly', 'syncLvWeekly'], ['monthly', 'syncLvMonthly']]) {
+      const el = document.getElementById(id);
+      if (el && el.checked) tfs.push(key);
+    }
+    const timeframes = tfs.length ? tfs : ['daily', 'weekly', 'monthly'];
     const r = await fetch(API.sync, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ server: addr || null, timeframes: tfs.length ? tfs : ['daily'] }),
+      body: JSON.stringify({ server: addr || null, timeframes }),
     });
     const d = await r.json();
     if (d.error) {

@@ -264,10 +264,11 @@ def sync_status():
 
 @app.route("/api/sync", methods=["POST"])
 def sync_now():
-    """手动触发一次数据同步（默认同步本地全市场股票池，可指定服务器地址）。"""
+    """手动触发一次数据同步（默认同步本地全市场股票池，可指定服务器地址）。
+    时间级别默认取 config.SYNC_TIMEFRAMES（日/周/月三级别），可由请求体覆盖。"""
     body = request.get_json(silent=True) or {}
     codes = body.get("codes") or None
-    timeframes = body.get("timeframes") or ["daily", "weekly", "monthly"]
+    timeframes = body.get("timeframes") or config.SYNC_TIMEFRAMES
     server = body.get("server")   # 可选服务器地址，形如 "host:port"
 
     # 解析服务器地址为 [(host, port)]，供 mootdx 使用；解析失败则用默认

@@ -58,6 +58,12 @@
             <datalist id="serverHistory"></datalist>
           </div>
           <div class="src-row src-row-center">
+            <span class="src-hint">同步级别：</span>
+            <label class="sync-lv"><input type="checkbox" id="syncLvDaily" checked> 日线</label>
+            <label class="sync-lv"><input type="checkbox" id="syncLvWeekly" checked> 周线</label>
+            <label class="sync-lv"><input type="checkbox" id="syncLvMonthly" checked> 月线</label>
+          </div>
+          <div class="src-row src-row-center">
             <button class="ghost-btn" id="serverConnect">🔌 连接</button>
             <span id="serverStatus" class="src-status"></span>
           </div>

@@ -461,6 +461,12 @@ body {
 .src-hint { font-size: 11px; color: var(--text-dim); }
 .src-row { display: flex; gap: 8px; margin-bottom: 8px; }
 .src-row-center { align-items: center; }
+/* 同步级别勾选 */
+.sync-lv {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 12px; color: var(--text-dim); cursor: pointer;
+}
+.sync-lv input { accent-color: var(--accent); margin: 0; }
 .src-input {
   flex: 1; min-width: 0; padding: 8px 10px; border-radius: 6px; font-size: 12px;
   background: var(--bg-card); border: 1px solid var(--border); color: var(--text);
