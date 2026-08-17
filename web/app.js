@@ -19,14 +19,16 @@ const API = {
   board: (kind, date) => `/api/board/${kind}${date ? '?date=' + date : ''}`,
   ladder: (date) => `/api/ladder${date ? '?date=' + date : ''}`,
   ladderDown: () => '/api/ladder-down',
-  unsealed: (dir) => `/api/unsealed/${dir}`,
   dragonTiger: (date) => `/api/dragon-tiger${date ? '?date=' + date : ''}`,
   dragonTigerSeats: (code, date) => `/api/dragon-tiger/${code}${date ? '?date=' + date : ''}`,
-  dragonTigerHistory: (code) => `/api/dragon-tiger/history/${code}`,
+  dragonTigerHistory: (code, days = 90) => `/api/dragon-tiger/history/${code}?days=${days}`,
   latestDate: '/api/latest-trade-date',
   hotspot: (date) => `/api/hotspot${date ? '?date=' + date : ''}`,
   news: '/api/news',
-  weekendNews: '/api/news/weekend',
+  dailyNews: '/api/news/daily',
+  sealRate: (dir) => `/api/seal-rate/${dir}`,
+  opened: (dir) => `/api/opened/${dir}`,
+  marketOverview: '/api/market/overview',
 };
 
 // A股配色：涨=红，跌=绿
@@ -69,6 +71,7 @@ const state = {
 // ===================== 初始化 =====================
 document.addEventListener('DOMContentLoaded', async () => {
   bindEvents();
+  initSidebarCollapse();
   try {
     const r = await fetch(API.meta);
     state.meta = await r.json();
@@ -147,6 +150,7 @@ function bindEvents() {
   });
   document.getElementById('eventRefresh').addEventListener('click', () => loadEvent(state.eventTab));
   document.getElementById('eventDate').addEventListener('change', () => loadEvent(state.eventTab));
+  document.getElementById('sidebarToggle').addEventListener('click', toggleSidebar);
 }
 
 // ===================== 渲染筛选控件 =====================
@@ -1180,10 +1184,18 @@ function closeSelftest() {
 }
 
 // ===================== 顶层功能切换 & 市场事件 =====================
-const EVENT_TITLES = { zt: '涨停板', dt: '跌停板', ladder: '连板天梯', lhb: '龙虎榜', hotspot: '题材热点', news: '周末热点新闻' };
+const EVENT_TITLES = { zt: '涨停板', dt: '跌停板', ladder: '连板天梯', lhb: '龙虎榜', hotspot: '题材热点', news: '每日新闻', market: '市场分析' };
 const SUB_TABS = {
-  zt: [{ key: 'board', zh: '封板涨停' }, { key: 'unsealed', zh: '未封板' }],
-  dt: [{ key: 'board', zh: '封板跌停' }, { key: 'unsealed', zh: '未封板' }],
+  zt: [
+    { key: 'board', zh: '封板涨停' },
+    { key: 'seal_rate', zh: '封板率' },
+    { key: 'opened', zh: '涨停打开' },
+  ],
+  dt: [
+    { key: 'board', zh: '封板跌停' },
+    { key: 'seal_rate', zh: '封板率' },
+    { key: 'opened', zh: '跌停打开' },
+  ],
   ladder: [{ key: 'up', zh: '涨停连板' }, { key: 'down', zh: '跌停连板' }],
 };
 
@@ -1218,6 +1230,26 @@ async function initEventDate() {
   } catch (e) { /* 忽略 */ }
 }
 
+function toggleSidebar() {
+  const layout = document.querySelector('.layout');
+  if (!layout) return;
+  const collapsed = layout.classList.toggle('sidebar-collapsed');
+  const btn = document.getElementById('sidebarToggle');
+  if (btn) btn.textContent = collapsed ? '⏵ 展开筛选栏' : '⏴ 收起筛选栏';
+  try { localStorage.setItem('candle_sidebar_collapsed', collapsed ? '1' : '0'); } catch (e) { /* 忽略 */ }
+}
+
+function initSidebarCollapse() {
+  // 恢复上次折叠状态（折叠时侧栏隐藏，主体自适应占满）
+  try {
+    if (localStorage.getItem('candle_sidebar_collapsed') === '1') {
+      document.querySelector('.layout').classList.add('sidebar-collapsed');
+      const btn = document.getElementById('sidebarToggle');
+      if (btn) btn.textContent = '⏵ 展开筛选栏';
+    }
+  } catch (e) { /* 忽略 */ }
+}
+
 async function loadEvent(tab) {
   document.getElementById('eventTitle').textContent = EVENT_TITLES[tab] || '';
   renderSubTabs(tab);
@@ -1227,10 +1259,12 @@ async function loadEvent(tab) {
   const sub = state.eventSub;
   try {
     if (tab === 'zt') {
-      if (sub === 'unsealed') renderUnsealed(await (await fetch(API.unsealed('up'))).json());
+      if (sub === 'seal_rate') renderSealRate('up', await (await fetch(API.sealRate('up'))).json());
+      else if (sub === 'opened') renderOpened('up', await (await fetch(API.opened('up'))).json());
       else renderBoard('zt', await (await fetch(API.board('zt', date))).json());
     } else if (tab === 'dt') {
-      if (sub === 'unsealed') renderUnsealed(await (await fetch(API.unsealed('down'))).json());
+      if (sub === 'seal_rate') renderSealRate('down', await (await fetch(API.sealRate('down'))).json());
+      else if (sub === 'opened') renderOpened('down', await (await fetch(API.opened('down'))).json());
       else renderBoard('dt', await (await fetch(API.board('dt', date))).json());
     } else if (tab === 'ladder') {
       if (sub === 'down') renderLadder(await (await fetch(API.ladderDown())).json(), true);
@@ -1240,7 +1274,9 @@ async function loadEvent(tab) {
     } else if (tab === 'hotspot') {
       renderHotspot(await (await fetch(API.hotspot(date))).json());
     } else if (tab === 'news') {
-      renderWeekendNews(await (await fetch(API.weekendNews)).json());
+      renderDailyNews(await (await fetch(API.dailyNews)).json());
+    } else if (tab === 'market') {
+      renderMarket(await (await fetch(API.marketOverview)).json());
     }
   } catch (e) {
     console.error(e);
@@ -1271,23 +1307,6 @@ function renderBoard(kind, d) {
   const empty = `<tr><td colspan="${colCount}" style="text-align:center;color:var(--text-faint);padding:40px">当日无数据</td></tr>`;
   document.getElementById('eventContent').innerHTML =
     `<table class="event-table"><thead><tr>${header}</tr></thead><tbody>${rows || empty}</tbody></table>`;
-  document.querySelectorAll('#eventContent tr[data-code]').forEach((tr) => {
-    tr.addEventListener('click', () => openKline(tr.dataset.code, 'daily'));
-  });
-}
-
-function renderUnsealed(d) {
-  const isUp = d.direction === 'up';
-  document.getElementById('eventStats').innerHTML = `<b>${d.date}</b> · ${isUp ? '涨停未封板' : '跌停未封板'} <b>${d.count}</b> 只`;
-  const rows = (d.stocks || []).map((s) => {
-    const chgCls = s.change_pct >= 0 ? 'num-up' : 'num-down';
-    return `<tr class="clickable" data-code="${s.code}">
-      <td class="cell-code">${s.code}</td><td>${s.name}</td><td>${s.market_zh}</td>
-      <td class="${chgCls}">${s.change_pct >= 0 ? '+' : ''}${s.change_pct}%</td><td>${s.close}</td></tr>`;
-  }).join('');
-  const empty = '<tr><td colspan="5" style="text-align:center;color:var(--text-faint);padding:40px">当日无数据</td></tr>';
-  document.getElementById('eventContent').innerHTML =
-    `<table class="event-table"><thead><tr><th>代码</th><th>名称</th><th>板块</th><th>涨跌幅</th><th>收盘价</th></tr></thead><tbody>${rows || empty}</tbody></table>`;
   document.querySelectorAll('#eventContent tr[data-code]').forEach((tr) => {
     tr.addEventListener('click', () => openKline(tr.dataset.code, 'daily'));
   });
@@ -1349,7 +1368,7 @@ async function openSeat(code) {
   try {
     const [d, h] = await Promise.all([
       (await fetch(API.dragonTigerSeats(code, date))).json(),
-      (await fetch(API.dragonTigerHistory(code))).json(),
+      (await fetch(API.dragonTigerHistory(code, 90))).json(),   // 最近 3 个月上榜明细
     ]);
     const seatRow = (s) => `<tr><td>${s.name}</td><td class="num-up">${s.buy_wan}万</td><td class="num-down">${s.sell_wan}万</td><td>${s.net_wan}万</td></tr>`;
     const buyRows = (d.buy_seats || []).map(seatRow).join('');
@@ -1362,7 +1381,7 @@ async function openSeat(code) {
         const netCls = r.net_buy_wan >= 0 ? 'num-up' : 'num-down';
         return `<tr><td>${r.date}</td><td class="${r.change_pct >= 0 ? 'num-up' : 'num-down'}">${r.change_pct >= 0 ? '+' : ''}${r.change_pct}%</td><td class="${netCls}">${r.net_buy_wan >= 0 ? '+' : ''}${r.net_buy_wan}万</td><td>${r.turnover_pct}%</td><td class="reason-cell">${r.reason}</td></tr>`;
       }).join('');
-      return recRows || '<tr><td colspan="5" style="color:var(--text-faint)">近一年无上榜记录</td></tr>';
+      return recRows || '<tr><td colspan="5" style="color:var(--text-faint)">近3个月无上榜记录</td></tr>';
     };
 
     document.getElementById('seatBody').innerHTML = `
@@ -1381,7 +1400,7 @@ async function openSeat(code) {
       </div>
       <div class="seat-section">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <h4 style="margin:0">近一年上榜明细（${h.count} 次）</h4>
+          <h4 style="margin:0">近3个月上榜明细（${h.count} 次）</h4>
           <button class="ghost-btn" id="historySortBtn">日期${historyAsc ? '升序 ↑' : '降序 ↓'}</button>
         </div>
         <table class="seat-table"><thead><tr><th>日期</th><th>涨跌幅</th><th>净买额</th><th>换手</th><th>上榜原因</th></tr></thead><tbody id="historyBody">${renderHistory()}</tbody></table>
@@ -1425,10 +1444,10 @@ function renderHotspot(d) {
   });
 }
 
-function renderWeekendNews(d) {
+function renderDailyNews(d) {
   const news = d.news || [];
   document.getElementById('eventStats').innerHTML =
-    `周末窗口 <b>${d.window_start}</b> ~ <b>${d.window_end}</b> · 共 <b>${d.count}</b> 条（★ 为重点）`;
+    `每日新闻 <b>${d.date}</b> · 共 <b>${d.count}</b> 条（★ 为重点）`;
   const html = news.map((n) => {
     const star = n.important ? '<span style="color:var(--resonance)">★</span>' : '<span style="color:var(--text-faint)">·</span>';
     const stockTags = (n.stocks || []).map((c) => `<span class="tag tag-tf news-stock" data-code="${c}">${c}</span>`).join('');
@@ -1442,10 +1461,101 @@ function renderWeekendNews(d) {
     </div>`;
   }).join('');
   document.getElementById('eventContent').innerHTML =
-    html || '<div style="padding:40px;color:var(--text-faint);text-align:center">暂无周末快讯</div>';
+    html || '<div style="padding:40px;color:var(--text-faint);text-align:center">暂无当日新闻</div>';
   document.querySelectorAll('#eventContent .news-stock[data-code]').forEach((el) => {
     el.addEventListener('click', (e) => { e.stopPropagation(); openKline(el.dataset.code, 'daily'); });
   });
+}
+
+// ===================== 涨停/跌停 封板率 / 打开 =====================
+function renderSealRate(dir, d) {
+  const kw = dir === 'up' ? '涨停' : '跌停';
+  const card = (label, s) => {
+    const rate = s.seal_rate != null ? `${s.seal_rate}%` : '—';
+    const rateCls = s.seal_rate != null && s.seal_rate >= 50 ? 'num-up' : 'num-down';
+    return `<div class="seal-card">
+      <div class="seal-date">${label} · <b>${s.date || '—'}</b></div>
+      <div class="seal-metrics">
+        <div class="seal-metric"><span>封板${kw}</span><b>${s.board_count}</b> 只</div>
+        <div class="seal-metric"><span>${kw}打开</span><b>${s.opened_count}</b> 只</div>
+        <div class="seal-metric"><span>封板率</span><b class="${rateCls}">${rate}</b></div>
+      </div>
+    </div>`;
+  };
+  document.getElementById('eventStats').innerHTML =
+    `${kw}封板率 = 封板${kw} ÷ (封板${kw} + ${kw}打开)`;
+  document.getElementById('eventContent').innerHTML =
+    `<div class="seal-grid">${card('今日', d.today || {})}${card('昨日', d.yesterday || {})}</div>`;
+}
+
+function renderOpened(dir, d) {
+  const kw = dir === 'up' ? '涨停打开' : '跌停打开';
+  const rowsOf = (s) => (s && s.stocks || []).map((r) => {
+    const chgCls = r.change_pct >= 0 ? 'num-up' : 'num-down';
+    return `<tr class="clickable" data-code="${r.code}">
+      <td class="cell-code">${r.code}</td><td>${r.name}</td><td>${r.market_zh}</td>
+      <td class="${chgCls}">${r.change_pct >= 0 ? '+' : ''}${r.change_pct}%</td><td>${r.close}</td></tr>`;
+  }).join('');
+  const section = (label, s) => {
+    const rows = rowsOf(s);
+    const empty = '<tr><td colspan="5" style="text-align:center;color:var(--text-faint);padding:30px">当日无' + kw + '</td></tr>';
+    return `<div class="opened-section">
+      <div class="opened-head">${label}${kw} · <b>${s ? s.date : ''}</b>（${s ? s.count : 0} 只）</div>
+      <table class="event-table"><thead><tr><th>代码</th><th>名称</th><th>板块</th><th>涨跌幅</th><th>收盘价</th></tr></thead><tbody>${rows || empty}</tbody></table>
+    </div>`;
+  };
+  document.getElementById('eventStats').innerHTML = `${kw} = 盘中触及${dir === 'up' ? '涨停' : '跌停'}但收盘未封住`;
+  document.getElementById('eventContent').innerHTML =
+    section('今日', d.today) + section('昨日', d.yesterday);
+  document.querySelectorAll('#eventContent tr[data-code]').forEach((tr) => {
+    tr.addEventListener('click', () => openKline(tr.dataset.code, 'daily'));
+  });
+}
+
+// ===================== 市场分析 =====================
+function renderMarket(d) {
+  const fmtWan = (v) => (v == null ? '—' : (v >= 1e4 ? (v / 1e4).toFixed(2) + '亿' : v.toFixed(0) + '万'));
+  const fmtHand = (v) => (v == null ? '—' : (v >= 1e4 ? (v / 1e4).toFixed(2) + '亿手' : v.toFixed(0) + '手'));
+  const fmtYuan = (v) => (v == null ? '—' : (v >= 1e8 ? (v / 1e8).toFixed(2) + '亿' : (v / 1e4).toFixed(0) + '万'));
+  const cards = (d.indices || []).map((ix) => {
+    const up = ix.change_pct >= 0;
+    const cls = up ? 'num-up' : 'num-down';
+    const sign = up ? '+' : '';
+    const volChg = (ix.volume_today != null && ix.volume_yesterday)
+      ? ((ix.volume_today - ix.volume_yesterday) / ix.volume_yesterday * 100) : null;
+    return `<div class="idx-card">
+      <div class="idx-head"><span class="idx-name">${ix.name}</span><span class="idx-code">${ix.code}</span></div>
+      <div class="idx-price ${cls}">${ix.price.toFixed(2)}</div>
+      <div class="idx-chg ${cls}">${sign}${ix.change.toFixed(2)}　${sign}${ix.change_pct.toFixed(2)}%</div>
+      <div class="idx-meta">
+        <div><span>今开</span><b>${ix.open.toFixed(2)}</b></div>
+        <div><span>最高</span><b>${ix.high.toFixed(2)}</b></div>
+        <div><span>最低</span><b>${ix.low.toFixed(2)}</b></div>
+        <div><span>昨收</span><b>${ix.pre_close.toFixed(2)}</b></div>
+        <div><span>成交量(今)</span><b>${fmtHand(ix.volume_today)}</b></div>
+        <div><span>成交量(昨)</span><b>${fmtHand(ix.volume_yesterday)}</b></div>
+        <div><span>量比</span><b class="${volChg != null && volChg > 0 ? 'num-up' : 'num-down'}">${volChg != null ? (volChg > 0 ? '+' : '') + volChg.toFixed(1) + '%' : '—'}</b></div>
+        <div><span>成交额</span><b>${fmtWan(ix.amount_today_wan)}</b></div>
+      </div>
+    </div>`;
+  }).join('');
+  const flowRows = (d.fund_flow || []).map((f) => {
+    const netCls = (v) => (v >= 0 ? 'num-up' : 'num-down');
+    return `<tr><td>${f.date}</td>
+      <td class="${netCls(f.main_net)}">${fmtYuan(f.main_net)}</td>
+      <td class="${netCls(f.super_net)}">${fmtYuan(f.super_net)}</td>
+      <td class="${netCls(f.big_net)}">${fmtYuan(f.big_net)}</td>
+      <td class="${netCls(f.medium_net)}">${fmtYuan(f.medium_net)}</td>
+      <td class="${netCls(f.small_net)}">${fmtYuan(f.small_net)}</td>
+      <td class="${netCls(f.main_net_pct)}">${f.main_net_pct.toFixed(2)}%</td></tr>`;
+  }).join('');
+  document.getElementById('eventStats').innerHTML = `更新于 ${d.updated || '—'}`;
+  document.getElementById('eventContent').innerHTML = `
+    <div class="idx-grid">${cards || '<div style="padding:40px;color:var(--text-faint);text-align:center">暂无指数数据</div>'}</div>
+    <div class="flow-section">
+      <div class="flow-head">上证指数 · 资金流向</div>
+      <table class="event-table"><thead><tr><th>日期</th><th>主力净流入</th><th>超大单</th><th>大单</th><th>中单</th><th>小单</th><th>主力净占比</th></tr></thead><tbody>${flowRows || '<tr><td colspan="7" style="text-align:center;color:var(--text-faint);padding:30px">暂无资金流向数据</td></tr>'}</tbody></table>
+    </div>`;
 }
 
 // ===================== 生成筛选报告 =====================

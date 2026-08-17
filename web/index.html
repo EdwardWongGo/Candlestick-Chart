@@ -14,11 +14,7 @@
       <span class="logo">🕯</span>
       <div>
         <h1>A股量化分析工具</h1>
-        <p class="sub">蜡烛图形态筛选 · 涨停/跌停 · 烂板 · 连板天梯 · 龙虎榜</p>
       </div>
-    </div>
-    <div class="topbar-right">
-      <span class="badge" id="dataSourceBadge">数据源：通达信 · 东财 · 同花顺</span>
     </div>
   </header>
 
@@ -29,8 +25,9 @@
     <div class="tab" data-tab="dt">📉 跌停板</div>
     <div class="tab" data-tab="ladder">🪜 连板天梯</div>
     <div class="tab" data-tab="lhb">🐉 龙虎榜</div>
+    <div class="tab" data-tab="market">📊 市场分析</div>
     <div class="tab" data-tab="hotspot">🔥 题材热点</div>
-    <div class="tab" data-tab="news">📰 周末热点</div>
+    <div class="tab" data-tab="news">📰 每日新闻</div>
   </nav>
 
   <!-- ===================== 形态筛选（默认页） ===================== -->
@@ -163,6 +160,10 @@
 
     <!-- ===================== 右侧结果区 ===================== -->
     <main class="content">
+      <!-- 筛选栏折叠控制条 -->
+      <div class="content-toolbar">
+        <button class="ghost-btn" id="sidebarToggle" title="收起/展开左侧筛选栏">⏴ 收起筛选栏</button>
+      </div>
       <!-- 筛选进度横幅（结果区顶部，醒目） -->
       <div class="scan-banner hidden" id="scanBanner">
         <div class="scan-banner-inner">

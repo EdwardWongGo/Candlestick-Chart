@@ -189,6 +189,53 @@ body {
   overflow-y: auto; padding: 16px;
 }
 .content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+/* 筛选栏折叠：收起时隐藏侧栏，主体自动占满 */
+.layout.sidebar-collapsed .sidebar { display: none; }
+.content-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.content-toolbar .ghost-btn { padding: 4px 10px; font-size: 12px; }
+
+/* ===== 涨停封板率 / 涨停打开 ===== */
+.seal-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; padding: 4px; }
+.seal-card {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px;
+}
+.seal-date { font-size: 13px; margin-bottom: 10px; color: var(--text); }
+.seal-metrics { display: flex; gap: 18px; flex-wrap: wrap; }
+.seal-metric { display: flex; flex-direction: column; gap: 2px; }
+.seal-metric span { font-size: 11px; color: var(--text-faint); }
+.seal-metric b { font-size: 18px; }
+.opened-section { margin-bottom: 18px; }
+.opened-head {
+  font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text);
+  padding: 8px 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+}
+
+/* ===== 市场分析：指数卡片 + 资金流向 ===== */
+.idx-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px; padding: 4px; margin-bottom: 16px;
+}
+.idx-card {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px;
+}
+.idx-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
+.idx-name { font-size: 14px; font-weight: 600; }
+.idx-code { font-size: 11px; color: var(--text-faint); }
+.idx-price { font-size: 26px; font-weight: 700; line-height: 1.2; }
+.idx-chg { font-size: 13px; margin-bottom: 10px; }
+.idx-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; }
+.idx-meta div { display: flex; justify-content: space-between; font-size: 12px; }
+.idx-meta span { color: var(--text-faint); }
+.idx-meta b { font-weight: 600; }
+.flow-section { padding: 4px; }
+.flow-head {
+  font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text);
+  padding: 8px 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+}
 
 /* ===== 面板 ===== */
 .panel { margin-bottom: 18px; }

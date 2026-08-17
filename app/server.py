@@ -40,8 +40,10 @@ from .market_events import (
     get_limit_board, get_lan_board, get_ladder,
     get_dragon_tiger, get_dragon_tiger_seats, latest_trade_date,
     get_hotspots, get_news,
-    get_dt_ladder, get_unsealed, get_weekend_news, get_dragon_tiger_history,
+    get_dt_ladder, get_daily_news, get_dragon_tiger_history,
+    get_seal_rate, get_opened,
 )
+from .market_overview import get_market_overview
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -165,16 +167,31 @@ def ladder_down():
     return jsonify(get_dt_ladder())
 
 
-@app.route("/api/unsealed/<direction>")
-def unsealed(direction):
+@app.route("/api/news/daily")
+def daily_news():
+    return jsonify(get_daily_news())
+
+
+@app.route("/api/seal-rate/<direction>")
+def seal_rate(direction):
+    """封板率（今日/昨日）：direction=up 涨停 / down 跌停。"""
     if direction not in ("up", "down"):
         return jsonify({"error": "未知方向"}), 400
-    return jsonify(get_unsealed(direction))
+    return jsonify(get_seal_rate(direction))
 
 
-@app.route("/api/news/weekend")
-def weekend_news():
-    return jsonify(get_weekend_news())
+@app.route("/api/opened/<direction>")
+def opened(direction):
+    """涨停/跌停打开（今日/昨日）。"""
+    if direction not in ("up", "down"):
+        return jsonify({"error": "未知方向"}), 400
+    return jsonify(get_opened(direction))
+
+
+@app.route("/api/market/overview")
+def market_overview():
+    """市场分析：指数行情（今日/昨日成交量、成交额）+ 资金流向。"""
+    return jsonify(get_market_overview())
 
 
 @app.route("/api/dragon-tiger/history/<code>")

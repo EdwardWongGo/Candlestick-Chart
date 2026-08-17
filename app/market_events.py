@@ -269,7 +269,7 @@ def last_completed_trade_date(max_back: int = 15) -> str:
     """最近一个「已收盘」交易日（以龙虎榜盘后发布数据为准）。
 
     与 latest_trade_date 的区别：盘中时 latest_trade_date 会返回「今天」，
-    但龙虎榜、周末热点等盘后数据当天尚未发布，需回退到上一个已收盘交易日。
+    但龙虎榜等盘后数据当天尚未发布，需回退到上一个已收盘交易日。
     """
     d = datetime.now()
     for _ in range(max_back):
@@ -538,8 +538,28 @@ def get_dt_ladder(date_dashed: str = None) -> dict:
     }
 
 
+def _prev_trade_date(today: str) -> Optional[str]:
+    """返回 today 的前一个交易日（从本地日线推导，跳过周末/节假日）。"""
+    try:
+        bars = _get_daily_bars("000001")
+        dates = [b.dt for b in bars]
+        if today in dates:
+            idx = dates.index(today)
+            return dates[idx - 1] if idx > 0 else None
+        for d in reversed(dates):
+            if d < today:
+                return d
+    except Exception:
+        pass
+    return None
+
+
 def get_unsealed(direction: str = "up", date_dashed: str = None) -> dict:
-    """未封板：扫描本地股票池，推导当日触板未封（涨停/跌停）的股票。"""
+    """涨停打开/未封板：扫描本地股票池，推导指定交易日触板未封（涨停/跌停）的股票。
+
+    date_dashed 为空时取最新交易日；指定日期时在本地日线中定位该日 bar 与其前一 bar。
+    """
+    target = date_dashed or latest_trade_date()
     universe = load_universe()
     codes = universe.codes
     names = dict(universe._names)
@@ -551,8 +571,19 @@ def get_unsealed(direction: str = "up", date_dashed: str = None) -> dict:
         bars = _get_daily_bars(code)
         if not bars or len(bars) < 2:
             continue
+        # 定位目标日期索引（默认取最新一根）
+        if date_dashed:
+            idx = None
+            for i in range(len(bars) - 1, -1, -1):
+                if bars[i].dt == date_dashed:
+                    idx = i
+                    break
+            if idx is None or idx < 1:
+                continue
+        else:
+            idx = len(bars) - 1
         name = names.get(code, "") or code
-        last, prev = bars[-1], bars[-2]
+        last, prev = bars[idx], bars[idx - 1]
         hit = (la.is_unsealed_up(last, prev.close, code, name) if direction == "up"
                else la.is_unsealed_down(last, prev.close, code, name))
         if hit:
@@ -565,17 +596,62 @@ def get_unsealed(direction: str = "up", date_dashed: str = None) -> dict:
             })
     results.sort(key=lambda r: -r["change_pct"])
     return {
-        "date": date_dashed or latest_trade_date(),
+        "date": target,
         "direction": direction,
         "count": len(results),
         "stocks": results,
     }
 
 
-def get_weekend_news(limit: int = 200) -> dict:
-    """周末热点新闻：筛选最近交易日收盘后到当前的新闻（含节假日边界）。"""
-    last_trade = last_completed_trade_date()   # 用已收盘交易日，避免盘中 window_start 落在未来
-    window_start = datetime.strptime(last_trade + " 15:00:00", "%Y-%m-%d %H:%M:%S")
+def get_seal_rate(direction: str = "up") -> dict:
+    """封板率：今日/昨日 = 封板(涨停/跌停) ÷ (封板 + 打开)。"""
+    today = latest_trade_date()
+    yesterday = _prev_trade_date(today)
+    out = {}
+    for label, day in (("today", today), ("yesterday", yesterday)):
+        item = {"date": day, "board_count": 0, "opened_count": 0, "seal_rate": None}
+        if day:
+            try:
+                board = get_limit_board(direction, day)
+                opened = get_unsealed(direction, day)
+                b = board.get("count", 0)
+                o = opened.get("count", 0)
+                total = b + o
+                item["board_count"] = b
+                item["opened_count"] = o
+                item["seal_rate"] = round(b / total * 100, 1) if total else None
+            except Exception:
+                pass
+        out[label] = item
+    return out
+
+
+def get_opened(direction: str = "up") -> dict:
+    """涨停/跌停打开：今日/昨日 盘中触及涨跌停但收盘未封住的股票列表。"""
+    today = latest_trade_date()
+    yesterday = _prev_trade_date(today)
+    out = {}
+    for label, day in (("today", today), ("yesterday", yesterday)):
+        item = {"date": day, "count": 0, "stocks": []}
+        if day:
+            try:
+                d = get_unsealed(direction, day)
+                item = {"date": d.get("date"), "count": d.get("count", 0),
+                        "stocks": d.get("stocks", [])}
+            except Exception:
+                pass
+        out[label] = item
+    return out
+
+
+def get_daily_news(limit: int = 200) -> dict:
+    """每日新闻：以最近交易日为时间维度，展示该交易日 00:00 至当前的当日新闻。
+
+    盘中展示当日快讯；周末展示最近交易日当日的新闻（含节假日边界由
+    latest_trade_date() 校准）。
+    """
+    trade_date = latest_trade_date()
+    day_start = datetime.strptime(trade_date + " 00:00:00", "%Y-%m-%d %H:%M:%S")
     now = datetime.now()
     all_news = get_news(limit).get("news", [])
     filtered = []
@@ -584,15 +660,15 @@ def get_weekend_news(limit: int = 200) -> dict:
             t = datetime.strptime(n["time"], "%Y-%m-%d %H:%M:%S")
         except (ValueError, TypeError):
             continue
-        if window_start <= t <= now:
+        if day_start <= t <= now:
             n["important"] = bool(n.get("stocks"))   # 带关联股票 = 重点
             filtered.append(n)
     # 重点新闻优先（稳定排序，组内保持最新在前）
     filtered.sort(key=lambda n: not n["important"])
     return {
-        "window_start": window_start.strftime("%Y-%m-%d %H:%M"),
-        "window_end": now.strftime("%Y-%m-%d %H:%M"),
-        "last_trade_date": last_trade,
+        "date": trade_date,
+        "day_start": day_start.strftime("%Y-%m-%d %H:%M"),
+        "day_end": now.strftime("%Y-%m-%d %H:%M"),
         "count": len(filtered),
         "news": filtered,
     }
