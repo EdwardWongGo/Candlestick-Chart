@@ -54,27 +54,51 @@ body {
 .event-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 
 /* ===== 个股研报面板 ===== */
-.report-toolbar { display: flex; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--bg-panel); }
+.report-toolbar { display: flex; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--bg-panel); align-items: flex-start; }
+.report-search-wrap { position: relative; flex: 0 0 320px; }
 .report-input {
-  flex: 0 0 260px; padding: 10px 12px; border-radius: 6px; font-size: 14px;
+  width: 100%; padding: 10px 12px; border-radius: 6px; font-size: 14px;
   background: var(--bg-card); border: 1px solid var(--border); color: var(--text);
 }
 .report-input:focus { border-color: var(--accent); outline: none; }
+.report-cand {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 20;
+  max-height: 240px; overflow-y: auto; border-radius: 6px;
+  background: var(--bg-panel); border: 1px solid var(--border);
+  box-shadow: 0 6px 20px rgba(0,0,0,.35);
+}
+.report-cand > .report-cand {
+  padding: 9px 12px; font-size: 13px; cursor: pointer;
+}
+.report-cand > .report-cand:hover { background: var(--bg-hover, rgba(59,130,246,.12)); color: var(--accent); }
+.report-cand.hidden { display: none; }
 .report-meta { padding: 12px 20px 4px; font-size: 14px; color: var(--text-dim); }
 .report-list { padding: 8px 20px 30px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
 .report-item {
   background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
-  padding: 12px 16px;
+  padding: 12px 16px; cursor: pointer;
 }
+.report-item:hover { border-color: var(--accent); }
 .report-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
 .report-date { font-size: 12px; color: var(--text-faint); }
 .report-rating { font-size: 12px; color: #f23645; font-weight: 600; }
+.rating-change { font-style: normal; color: var(--text-faint); font-weight: 400; }
 .report-title { font-size: 14px; font-weight: 600; margin-bottom: 8px; line-height: 1.5; color: var(--text); }
 .report-foot { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--text-dim); }
 .report-pdf { color: var(--accent); text-decoration: none; }
 .report-pdf:hover { text-decoration: underline; }
-.report-empty { padding: 40px; text-align: center; color: var(--text-faint); }
-@media (max-width: 768px) { .report-toolbar { flex-wrap: wrap; } .report-input { flex: 1 1 100%; } }
+.report-detail {
+  margin-top: 10px; padding: 10px 12px; border-radius: 6px;
+  background: var(--bg-card); border: 1px dashed var(--border);
+}
+.report-detail.hidden { display: none; }
+.rd-row { font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
+.rd-row:last-child { margin-bottom: 0; }
+.rd-row b { color: var(--text); }
+.rd-row .num-up { color: #f23645; }
+.rd-sub { color: var(--text-faint); font-size: 11px; }
+.report-empty { padding: 40px; text-align: center; color: var(--text-faint); line-height: 1.8; }
+@media (max-width: 768px) { .report-toolbar { flex-wrap: wrap; } .report-search-wrap { flex: 1 1 100%; } }
 
 .event-toolbar {
   display: flex; align-items: center; justify-content: space-between;
@@ -232,6 +256,25 @@ body {
 
 /* ===== 市场分析报告按钮 ===== */
 .market-toolbar { display: flex; justify-content: flex-end; padding: 2px 4px 10px; }
+
+/* ===== 市场分析 K 线图 ===== */
+.market-kline { padding: 14px 20px; background: var(--bg-panel); border-bottom: 1px solid var(--border); }
+.kline-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.kline-idx-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.kline-chip {
+  padding: 4px 12px; border-radius: 14px; font-size: 12px; cursor: pointer;
+  background: var(--bg-card); border: 1px solid var(--border); color: var(--text-dim);
+}
+.kline-chip:hover { border-color: var(--accent); color: var(--text); }
+.kline-chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.kline-tf-switch { display: flex; gap: 4px; }
+.kline-tf-switch .tf-btn {
+  padding: 4px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;
+  background: var(--bg-card); border: 1px solid var(--border); color: var(--text-dim);
+}
+.kline-tf-switch .tf-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.kline-chart { width: 100%; height: 440px; min-height: 300px; }
+.kline-empty { padding: 80px 0; text-align: center; color: var(--text-faint); font-size: 13px; }
 
 /* ===== 每日新闻时间段分组 ===== */
 .news-group { margin-bottom: 16px; }

@@ -84,17 +84,30 @@ def _yyyymmdd_to_dashed(d: str) -> str:
     return f"{d[:4]}-{d[4:6]}-{d[6:8]}"
 
 
-def latest_trade_date(max_back: int = 15) -> str:
-    """自动探测最近一个有涨停池数据的交易日（用响应 qdate 校准，跳过周末/节假日）。"""
+# 最近交易日缓存：{探测日历日: 结果}，同一天内多次调用复用，避免重复探测东财
+_trade_date_cache: dict = {}
+
+
+def latest_trade_date(max_back: int = 5) -> str:
+    """自动探测最近一个有涨停池数据的交易日（用响应 qdate 校准，跳过周末/节假日）。
+
+    按「当天」缓存：一天内多个功能（涨停/跌停/龙虎榜/连板…）共享一次探测结果，
+    避免每次都发起最多 max_back 次东财请求导致页面长时间「加载中」。
+    """
+    today = datetime.now().strftime("%Y-%m-%d")
+    if today in _trade_date_cache:
+        return _trade_date_cache[today]
     d = datetime.now()
+    result = today
     for _ in range(max_back):
         ds = d.strftime("%Y-%m-%d")
         _, qdate = _fetch_limit_pool("wz.ztzt", _to_yyyymmdd(ds))
         if qdate:
-            return _yyyymmdd_to_dashed(qdate)
+            result = _yyyymmdd_to_dashed(qdate)
+            break
         d -= timedelta(days=1)
-    # 兜底：返回最近一个工作日
-    return datetime.now().strftime("%Y-%m-%d")
+    _trade_date_cache[today] = result
+    return result
 
 
 # ---------------------------------------------------------------------------

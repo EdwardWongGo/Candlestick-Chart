@@ -6,7 +6,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>A股蜡烛图形态筛选工具</title>
   <link rel="stylesheet" href="/static/style.css">
-  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  <script src="/static/echarts.min.js"></script>
+  <script>
+    // 本地 echarts 加载失败时回退到 CDN（离线包不受影响）
+    window.addEventListener('error', function (e) {
+      if (e.target && e.target.tagName === 'SCRIPT' && !window.echarts) {
+        var s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js';
+        document.head.appendChild(s);
+      }
+    }, true);
+  </script>
 </head>
 <body>
   <header class="topbar">
@@ -249,7 +259,10 @@
   <!-- ===================== 个股研报面板 ===================== -->
   <div class="tab-panel" id="panel-report">
     <div class="report-toolbar">
-      <input type="text" id="reportCode" class="report-input" placeholder="输入 6 位股票代码，如 600519" maxlength="6" autocomplete="off">
+      <div class="report-search-wrap">
+        <input type="text" id="reportCode" class="report-input" placeholder="输入股票名称或 6 位代码，如：贵州茅台 / 600519" maxlength="20" autocomplete="off">
+        <div class="report-cand hidden" id="reportCand"></div>
+      </div>
       <button class="ghost-btn" id="reportQueryBtn">🔍 查询研报</button>
     </div>
     <div class="report-meta" id="reportMeta"></div>

@@ -13,6 +13,7 @@ const API = {
   historyItem: (id) => `/api/history/${id}`,
   kline: (code, tf) => `/api/kline/${code}?tf=${tf}`,
   report: (code) => `/api/report/${code}`,
+  reportSearch: (kw) => `/api/report/search?kw=${kw}`,
   import: '/api/import',
   selftest: '/api/selftest',
   export: '/api/export',
@@ -30,9 +31,21 @@ const API = {
   sealRate: (dir) => `/api/seal-rate/${dir}`,
   opened: (dir) => `/api/opened/${dir}`,
   marketOverview: '/api/market/overview',
+  marketKline: (symbol, tf) => `/api/market/kline?symbol=${symbol}&tf=${tf}&count=160`,
 };
 
 // A股配色：涨=红，跌=绿
+
+// fetch 带超时（默认 25s），避免接口异常时界面一直「加载中」
+async function fetchTimeout(url, options = {}, ms = 25000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...options, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 const C_UP = '#f23645';
 const C_DOWN = '#26a69a';
 const C_ACCENT = '#4c8dff';
@@ -49,6 +62,9 @@ const state = {
   lockedParams: null,    // 锁定的历史筛选条件（基于历史记录继续筛选时锁定，只能追加）
   lockSource: null,      // 锁定来源描述（历史记录时间）
   showAllDims: false,    // 是否展开全部筛选维度（历史精简视图下默认收起未用维度）
+  marketIdx: 'sh000001', // 市场分析：当前指数
+  marketTf: 'day',       // 市场分析：日/周/月
+  marketChart: null,     // 市场分析 K 线图实例
   customCodes: [],       // 导入的自定义股票代码
   importNames: {},       // 导入代码的名称
   dataSource: 'local',   // 数据来源：local(本地) / server(服务器) / upload(上传文件)
@@ -109,6 +125,25 @@ function bindEvents() {
   // 个股研报查询
   document.getElementById('reportQueryBtn').addEventListener('click', queryReport);
   document.getElementById('reportCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') queryReport(); });
+  // 输入时实时搜索名称候选（防抖 350ms；纯数字不触发，等回车按代码查）
+  let reportSearchTimer = null;
+  document.getElementById('reportCode').addEventListener('input', (e) => {
+    clearTimeout(reportSearchTimer);
+    const v = e.target.value.trim();
+    if (!v || /^\d{1,6}$/.test(v)) { hideReportCand(); return; }
+    reportSearchTimer = setTimeout(async () => {
+      try {
+        const r = await fetchTimeout(API.reportSearch(encodeURIComponent(v)), {}, 10000);
+        const d = await r.json();
+        const results = d.results || [];
+        if (results.length > 1) showReportCand(results);
+        else hideReportCand();
+      } catch (err) { hideReportCand(); }
+    }, 350);
+  });
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.report-search-wrap')) hideReportCand();
+  });
   // 结果表所有列点击排序
   document.querySelectorAll('th.sortable').forEach((th) => {
     th.addEventListener('click', () => {
@@ -683,11 +718,14 @@ async function onServerConnect() {
   setSyncControls(true);   // 锁定「开始筛选」+ 来源/服务器下拉，显示中断按钮
   const statusEl = document.getElementById('serverStatus');
   const progressEl = document.getElementById('serverProgress');
+  const progressFill = document.getElementById('serverProgressFill');
+  const progressText = document.getElementById('serverProgressText');
   const btn = document.getElementById('serverConnect');
   statusEl.textContent = '连接中…';
   statusEl.className = 'src-status';
   progressEl.classList.remove('hidden');
-  document.getElementById('serverProgressText').textContent = '同步中（全市场 × 日/周/月三级别，约需数分钟）…';
+  progressFill.style.width = '0%';
+  progressText.textContent = '连接服务器…';
   btn.disabled = true;
 
   try {
@@ -699,45 +737,73 @@ async function onServerConnect() {
       if (el && el.checked) tfs.push(key);
     }
     const timeframes = tfs.length ? tfs : ['daily', 'weekly', 'monthly'];
-    const r = await fetch(API.sync, {
+    const r = await fetchTimeout(API.sync, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ server, timeframes }),
-    });
+    }, 30000);
     const d = await r.json();
     if (d.error) {
-      statusEl.textContent = `❌ 同步失败：${d.error}`;
-      statusEl.className = 'src-status src-fail';
-    } else if (d.cancelled) {
-      // 用户主动中断：安全退出，不刷新同步时间
-      statusEl.textContent = '⏹ 已中断同步，本地数据未更新';
+      statusEl.textContent = `❌ 连接失败：${d.error}`;
       statusEl.className = 'src-status src-fail';
     } else {
-      const { synced = 0, failed = 0, empty = 0 } = d;
-      if (synced > 0) {
-        statusEl.textContent = `✅ 同步完成：${synced} 项写入本地，请点击「开始筛选」`;
-        statusEl.className = 'src-status src-ok';
-      } else if (empty > 0) {
-        statusEl.textContent = `⚠️ 同步完成，但 ${empty} 项未获取到数据（数据源无返回）。可切换「数据服务器」后重试`;
-        statusEl.className = 'src-status src-fail';
-      } else if (failed > 0) {
-        statusEl.textContent = `⚠️ 同步完成：${failed} 项失败`;
-        statusEl.className = 'src-status src-fail';
-      } else {
-        statusEl.textContent = 'ℹ️ 本地数据已是最新，无需更新';
-        statusEl.className = 'src-status src-ok';
-      }
-      // 同步完成后刷新同步时间，筛选由用户点击「开始筛选」触发
-      await refreshLocalStatus();
+      // 后端已改为后台同步：轮询 /api/sync/status 实时展示进度
+      await pollSyncProgress(statusEl, progressFill, progressText);
     }
   } catch (e) {
-    statusEl.textContent = '❌ 连接失败，请检查网络或稍后重试';
+    statusEl.textContent = e && e.name === 'AbortError' ? '❌ 连接超时，请检查网络' : '❌ 连接失败，请检查网络或稍后重试';
     statusEl.className = 'src-status src-fail';
   } finally {
     state.serverSyncing = false;
     setSyncControls(false);   // 恢复全部控件：筛选按钮可用、下拉可切换、隐藏中断按钮
     progressEl.classList.add('hidden');
   }
+}
+
+// 轮询同步进度（最长 10 分钟），完成后展示结果
+async function pollSyncProgress(statusEl, progressFill, progressText) {
+  for (let i = 0; i < 750; i++) {
+    await new Promise((r) => setTimeout(r, 800));
+    let s;
+    try {
+      s = await (await fetchTimeout(API.syncStatus, {}, 15000)).json();
+    } catch (e) { continue; }
+    const p = s.progress || {};
+    if (p.total > 0 && p.done >= 0) {
+      const pct = Math.min(100, Math.round((p.done / p.total) * 100));
+      progressFill.style.width = pct + '%';
+      progressText.textContent = `同步中 ${pct}%（${p.done}/${p.total}）${p.msg ? ' · ' + p.msg : ''}`;
+    }
+    if (!p.active) {
+      if (p.error) {
+        statusEl.textContent = `❌ 同步失败：${p.error}`;
+        statusEl.className = 'src-status src-fail';
+      } else if (p.cancelled) {
+        statusEl.textContent = '⏹ 已中断同步，本地数据未更新';
+        statusEl.className = 'src-status src-fail';
+      } else {
+        const { synced = 0, failed = 0, empty = 0 } = p;
+        if (synced > 0) {
+          statusEl.textContent = `✅ 同步完成：${synced} 项写入本地，请点击「开始筛选」`;
+          statusEl.className = 'src-status src-ok';
+        } else if (empty > 0) {
+          statusEl.textContent = `⚠️ 同步完成，但 ${empty} 项未获取到数据（数据源无返回）。可切换「数据服务器」后重试`;
+          statusEl.className = 'src-status src-fail';
+        } else if (failed > 0) {
+          statusEl.textContent = `⚠️ 同步完成：${failed} 项失败`;
+          statusEl.className = 'src-status src-fail';
+        } else {
+          statusEl.textContent = 'ℹ️ 本地数据已是最新，无需更新';
+          statusEl.className = 'src-status src-ok';
+        }
+      }
+      // 同步完成后刷新同步时间，筛选由用户点击「开始筛选」触发
+      await refreshLocalStatus();
+      return;
+    }
+  }
+  statusEl.textContent = '❌ 同步超时，请查看日志后重试';
+  statusEl.className = 'src-status src-fail';
 }
 
 async function onServerCancel() {
@@ -1273,32 +1339,36 @@ async function loadEvent(tab) {
     if (tab === 'zt' || tab === 'dt') {
       const dir = tab === 'zt' ? 'up' : 'down';
       try {
-        renderTitleSealRate(dir, await (await fetch(API.sealRate(dir))).json());
+        renderTitleSealRate(dir, await (await fetchTimeout(API.sealRate(dir))).json());
       } catch (e) { clearTitleSealRate(); }
     } else {
       clearTitleSealRate();
     }
     if (tab === 'zt') {
-      if (sub === 'opened') renderOpened('up', await (await fetch(API.opened('up'))).json());
-      else renderBoard('zt', await (await fetch(API.board('zt', date))).json());
+      if (sub === 'opened') renderOpened('up', await (await fetchTimeout(API.opened('up'))).json());
+      else renderBoard('zt', await (await fetchTimeout(API.board('zt', date))).json());
     } else if (tab === 'dt') {
-      if (sub === 'opened') renderOpened('down', await (await fetch(API.opened('down'))).json());
-      else renderBoard('dt', await (await fetch(API.board('dt', date))).json());
+      if (sub === 'opened') renderOpened('down', await (await fetchTimeout(API.opened('down'))).json());
+      else renderBoard('dt', await (await fetchTimeout(API.board('dt', date))).json());
     } else if (tab === 'ladder') {
-      if (sub === 'down') renderLadder(await (await fetch(API.ladderDown())).json(), true);
-      else renderLadder(await (await fetch(API.ladder(date))).json(), false);
+      if (sub === 'down') renderLadder(await (await fetchTimeout(API.ladderDown())).json(), true);
+      else renderLadder(await (await fetchTimeout(API.ladder(date))).json(), false);
     } else if (tab === 'lhb') {
-      renderDragonTiger(await (await fetch(API.dragonTiger(date))).json());
+      renderDragonTiger(await (await fetchTimeout(API.dragonTiger(date))).json());
     } else if (tab === 'hotspot') {
-      renderHotspot(await (await fetch(API.hotspot(date))).json());
+      renderHotspot(await (await fetchTimeout(API.hotspot(date))).json());
     } else if (tab === 'news') {
-      renderDailyNews(await (await fetch(API.dailyNews)).json());
+      renderDailyNews(await (await fetchTimeout(API.dailyNews)).json());
     } else if (tab === 'market') {
-      renderMarket(await (await fetch(API.marketOverview)).json());
+      renderMarket(await (await fetchTimeout(API.marketOverview)).json());
     }
   } catch (e) {
     console.error(e);
-    document.getElementById('eventStats').textContent = '加载失败，请检查网络';
+    // 明确错误/空状态，避免一直「加载中」
+    const msg = (e && e.name === 'AbortError') ? '⏱ 加载超时，请稍后重试' : '⚠️ 加载失败，请检查网络';
+    document.getElementById('eventStats').textContent = msg;
+    document.getElementById('eventContent').innerHTML =
+      `<div class="event-empty" style="padding:60px;text-align:center;color:var(--text-faint)">${msg}</div>`;
   }
 }
 
@@ -1435,50 +1505,111 @@ async function openSeat(code) {
 
 // ===================== 个股研报 =====================
 async function queryReport() {
-  const code = document.getElementById('reportCode').value.trim();
-  if (!/^\d{6}$/.test(code)) {
-    alert('请输入 6 位股票代码，如 600519');
-    return;
+  const val = document.getElementById('reportCode').value.trim();
+  if (!val) { alert('请输入股票名称或 6 位代码，如：贵州茅台 / 600519'); return; }
+  const meta = document.getElementById('reportMeta');
+  const list = document.getElementById('reportList');
+  // 6 位纯数字 → 直接按代码查询
+  if (/^\d{6}$/.test(val)) {
+    hideReportCand();
+    return queryReportByCode(val);
   }
+  // 名称/模糊 → 先搜索匹配股票
+  meta.textContent = `正在搜索「${val}」…`;
+  list.innerHTML = '';
+  try {
+    const r = await fetchTimeout(API.reportSearch(encodeURIComponent(val)), {}, 15000);
+    const d = await r.json();
+    const results = d.results || [];
+    if (!results.length) {
+      meta.innerHTML = '<span style="color:var(--text-dim)">未找到与「' + val + '」匹配的股票，请检查名称或代码</span>';
+      return;
+    }
+    if (results.length === 1) {
+      document.getElementById('reportCode').value = results[0].code;
+      hideReportCand();
+      return queryReportByCode(results[0].code, results[0].name);
+    }
+    showReportCand(results);   // 多个匹配 → 候选列表供选择
+    meta.textContent = `找到 ${results.length} 只匹配股票，请选择：`;
+  } catch (e) {
+    meta.textContent = '❌ 搜索失败，请检查网络后重试';
+  }
+}
+
+async function queryReportByCode(code, name) {
   const meta = document.getElementById('reportMeta');
   const list = document.getElementById('reportList');
   meta.textContent = `正在查询 ${code} 的研报…`;
   list.innerHTML = '';
   try {
-    const r = await fetch(API.report(code));
+    const r = await fetchTimeout(API.report(code), {}, 30000);
     const d = await r.json();
-    if (d.error) {
-      meta.textContent = `❌ ${d.error}`;
-      return;
-    }
+    if (d.error) { meta.textContent = `❌ ${d.error}`; return; }
     meta.innerHTML = d.count > 0
-      ? `📑 <b>${d.name || d.code}</b>（${d.code}）最近一年研报 <b>${d.count}</b> 篇`
-      : `📑 <b>${d.name || d.code}</b>（${d.code}）最近一年暂无研报`;
+      ? `📑 <b>${d.name || name || d.code}</b>（${d.code}）最近一年研报 <b>${d.count}</b> 篇，点击条目可展开详情`
+      : `📑 <b>${d.name || name || d.code}</b>（${d.code}）最近一年暂无研报`;
     renderReportList(list, d.reports || []);
   } catch (e) {
-    meta.textContent = '❌ 查询失败，请检查网络后重试';
+    meta.textContent = (e && e.name === 'AbortError') ? '❌ 查询超时，请稍后重试' : '❌ 查询失败，请检查网络后重试';
   }
+}
+
+// 名称搜索候选：显示匹配股票列表
+function showReportCand(results) {
+  const box = document.getElementById('reportCand');
+  if (!box) return;
+  box.innerHTML = results.map((r) =>
+    `<div class="report-cand" data-code="${r.code}">${r.code}　${r.name || ''}</div>`).join('');
+  box.classList.remove('hidden');
+  box.querySelectorAll('.report-cand').forEach((c) => {
+    c.addEventListener('click', () => {
+      document.getElementById('reportCode').value = c.dataset.code;
+      hideReportCand();
+      queryReportByCode(c.dataset.code);
+    });
+  });
+}
+
+function hideReportCand() {
+  const box = document.getElementById('reportCand');
+  if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
 }
 
 function renderReportList(container, reports) {
   if (!reports.length) {
-    container.innerHTML = '<div class="report-empty">最近一年没有研报记录</div>';
+    container.innerHTML = '<div class="report-empty">📭 最近一年没有研报记录<br><span style="font-size:12px;color:var(--text-faint)">可尝试搜索其他股票</span></div>';
     return;
   }
   container.innerHTML = reports.map((r) => `
-    <div class="report-item">
+    <div class="report-item" title="点击展开详情">
       <div class="report-head">
         <span class="report-date">${r.date}</span>
-        <span class="report-rating">${r.rating || '—'}</span>
+        <span class="report-rating">${r.rating || '—'}${r.rating_change && r.rating_change !== '-' ? `<em class="rating-change">（${r.rating_change}）</em>` : ''}</span>
       </div>
       <div class="report-title">${r.title}</div>
       <div class="report-foot">
-        <span>🏢 ${r.org}</span>
+        <span>🏢 ${r.org || '—'}</span>
+        ${r.author ? `<span>👤 ${r.author}</span>` : ''}
         ${r.industry ? `<span>📂 ${r.industry}</span>` : ''}
-        ${r.eps_this != null ? `<span>EPS 预测：${r.eps_this}${r.eps_next != null ? ` / ${r.eps_next}` : ''}</span>` : ''}
         ${r.pdf_url ? `<a href="${r.pdf_url}" target="_blank" rel="noopener" class="report-pdf">📄 查看 PDF</a>` : ''}
       </div>
+      <div class="report-detail hidden">
+        ${r.target_price != null
+          ? `<div class="rd-row">🎯 目标价：<b class="num-up">${r.target_price}</b>${r.target_low != null ? `<span class="rd-sub">（区间 ${r.target_low} ~ ${r.target_price}）</span>` : ''}</div>` : ''}
+        ${r.eps_this != null
+          ? `<div class="rd-row">📈 EPS 预测：今年 <b>${r.eps_this}</b>${r.eps_next != null ? ` ／ 明年 <b>${r.eps_next}</b>` : ''}${r.eps_next2 != null ? ` ／ 后年 <b>${r.eps_next2}</b>` : ''}</div>` : ''}
+        ${r.stock_name ? `<div class="rd-row">🏷 标的：${r.stock_name}</div>` : ''}
+      </div>
     </div>`).join('');
+  // 点击条目展开/收起详情
+  container.querySelectorAll('.report-item').forEach((item) => {
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('a')) return;
+      const dt = item.querySelector('.report-detail');
+      if (dt) dt.classList.toggle('hidden');
+    });
+  });
 }
 
 function closeSeat() {
@@ -1642,6 +1773,19 @@ function renderMarket(d) {
   }).join('');
   document.getElementById('eventStats').innerHTML = `更新于 ${d.updated || '—'}`;
   document.getElementById('eventContent').innerHTML = `
+    <div class="market-kline">
+      <div class="kline-toolbar">
+        <div class="kline-idx-chips" id="klineIdxChips">
+          ${INDEXES.map(([sym, nm]) =>
+            `<span class="kline-chip ${sym === state.marketIdx ? 'active' : ''}" data-sym="${sym}">${nm}</span>`).join('')}
+        </div>
+        <div class="kline-tf-switch">
+          ${['day', 'week', 'month'].map((tf) =>
+            `<button class="tf-btn ${tf === state.marketTf ? 'active' : ''}" data-tf="${tf}">${{ day: '日K', week: '周K', month: '月K' }[tf]}</button>`).join('')}
+        </div>
+      </div>
+      <div class="kline-chart" id="indexKlineChart">加载中…</div>
+    </div>
     <div class="market-toolbar">
       <button class="ghost-btn" id="marketReportBtn">📄 生成市场分析报告</button>
     </div>
@@ -1652,6 +1796,117 @@ function renderMarket(d) {
     </div>`;
   const rb = document.getElementById('marketReportBtn');
   if (rb) rb.addEventListener('click', () => buildMarketReport(d));
+  // K 线图：指数选择 + 级别切换 + 渲染
+  bindKlineToolbar();
+  renderIndexKline(state.marketIdx, state.marketTf);
+}
+
+// 关注指数（与后端 _INDICES 一致）
+const INDEXES = [
+  ['sh000001', '上证指数'], ['sz399001', '深证成指'], ['sz399006', '创业板指'],
+  ['sh000688', '科创50'], ['bj899050', '北证50'], ['sh000300', '沪深300'],
+  ['sh000016', '上证50'], ['sh000852', '中证1000'],
+];
+
+function bindKlineToolbar() {
+  document.querySelectorAll('#klineIdxChips .kline-chip').forEach((c) => {
+    c.addEventListener('click', () => {
+      state.marketIdx = c.dataset.sym;
+      document.querySelectorAll('#klineIdxChips .kline-chip').forEach((x) => x.classList.toggle('active', x === c));
+      renderIndexKline(state.marketIdx, state.marketTf);
+    });
+  });
+  document.querySelectorAll('.kline-tf-switch .tf-btn').forEach((b) => {
+    b.addEventListener('click', () => {
+      state.marketTf = b.dataset.tf;
+      document.querySelectorAll('.kline-tf-switch .tf-btn').forEach((x) => x.classList.toggle('active', x === b));
+      renderIndexKline(state.marketIdx, state.marketTf);
+    });
+  });
+}
+
+// 指数 K 线图（日/周/月 + 成交量）
+async function renderIndexKline(symbol, tf) {
+  const el = document.getElementById('indexKlineChart');
+  if (!el) return;
+  el.style.height = '440px';
+  el.innerHTML = '<div class="kline-empty">加载中…</div>';
+  try {
+    const r = await fetchTimeout(API.marketKline(symbol, tf), {}, 20000);
+    const d = await r.json();
+    if (d.error || !d.kline || !d.kline.length) {
+      const tfZh = { day: '日', week: '周', month: '月' }[tf] || '';
+      el.innerHTML = `<div class="kline-empty">暂无 ${d.name || symbol} 的${tfZh}K 数据</div>`;
+      return;
+    }
+    drawIndexKline(el, d);
+  } catch (e) {
+    el.innerHTML = '<div class="kline-empty">⏱ 加载失败或超时，请稍后重试</div>';
+  }
+}
+
+function drawIndexKline(el, d) {
+  if (!window.echarts) { el.innerHTML = '<div class="kline-empty">图表组件加载失败</div>'; return; }
+  if (state.marketChart) { state.marketChart.dispose(); state.marketChart = null; }
+  const chart = echarts.init(el);
+  state.marketChart = chart;
+  const dates = d.kline.map((k) => k[0]);
+  const kdata = d.kline.map((k) => [k[1], k[2], k[3], k[4]]);   // [open, close, low, high]
+  const vols = d.volume.map((v) => ({
+    value: v[1],
+    itemStyle: { color: v[2] >= 0 ? '#f23645' : '#26a69a' },   // 涨红跌绿（A股）
+  }));
+  chart.setOption({
+    animation: false,
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'axis', axisPointer: { type: 'cross' },
+      backgroundColor: '#1f2430', borderColor: '#333', textStyle: { color: '#ddd', fontSize: 12 },
+      formatter: (ps) => {
+        const i = ps[0].dataIndex;
+        const k = d.kline[i];
+        const v = d.volume[i];
+        const cls = (c) => (c >= 0 ? '#f23645' : '#26a69a');
+        const chg = ((k[2] - k[1]) / k[1] * 100).toFixed(2);
+        return `<b>${k[0]}</b><br/>开 ${k[1].toFixed(2)}　收 ${k[2].toFixed(2)}<br/>
+          高 ${k[3].toFixed(2)}　低 ${k[4].toFixed(2)}<br/>
+          涨跌 <span style="color:${cls(k[2] - k[1])}">${k[2] >= k[1] ? '+' : ''}${chg}%</span><br/>
+          成交量 ${v ? (v[1] / 1e8).toFixed(2) + '亿手' : '—'}`;
+      },
+    },
+    axisPointer: { link: [{ xAxisIndex: 'all' }], label: { backgroundColor: '#777' } },
+    grid: [
+      { left: 64, right: 24, top: 24, height: '56%' },
+      { left: 64, right: 24, top: '70%', height: '16%' },
+    ],
+    xAxis: [
+      { type: 'category', data: dates, gridIndex: 0, boundaryGap: true,
+        axisLine: { lineStyle: { color: '#3a3f4b' } }, axisLabel: { color: '#999', fontSize: 11 } },
+      { type: 'category', data: dates, gridIndex: 1, axisLabel: { show: false },
+        axisLine: { lineStyle: { color: '#3a3f4b' } } },
+    ],
+    yAxis: [
+      { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: '#262b36' } },
+        axisLabel: { color: '#999', fontSize: 11 } },
+      { gridIndex: 1, splitNumber: 2, axisLabel: { show: false }, splitLine: { show: false } },
+    ],
+    dataZoom: [
+      { type: 'inside', xAxisIndex: [0, 1], start: 30, end: 100 },
+      { type: 'slider', xAxisIndex: [0, 1], top: '90%', height: 14,
+        start: 30, end: 100, borderColor: '#333', backgroundColor: '#1a1f2b',
+        fillerColor: 'rgba(59,130,246,.15)', textStyle: { color: '#999', fontSize: 10 } },
+    ],
+    series: [
+      {
+        name: d.name, type: 'candlestick', data: kdata,
+        itemStyle: { color: '#f23645', color0: '#26a69a', borderColor: '#f23645', borderColor0: '#26a69a' },
+      },
+      { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: vols, barWidth: '60%' },
+    ],
+  });
+  const onResize = () => { if (state.marketChart) state.marketChart.resize(); };
+  window.removeEventListener('resize', onResize);
+  window.addEventListener('resize', onResize);
 }
 
 // ===================== 市场分析报告 =====================

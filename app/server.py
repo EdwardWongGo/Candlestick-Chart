@@ -43,7 +43,7 @@ from .market_events import (
     get_dt_ladder, get_daily_news, get_dragon_tiger_history,
     get_seal_rate, get_opened,
 )
-from .market_overview import get_market_overview
+from .market_overview import get_market_overview, get_index_kline
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -194,6 +194,21 @@ def market_overview():
     return jsonify(get_market_overview())
 
 
+@app.route("/api/market/kline")
+def market_kline():
+    """指数 K 线（日/周/月 + 成交量），供前端 ECharts 渲染。"""
+    symbol = request.args.get("symbol") or "sh000001"
+    tf = request.args.get("tf") or "day"
+    count = request.args.get("count", 120, type=int)
+    if tf not in ("day", "week", "month"):
+        tf = "day"
+    count = min(max(count, 30), 500)
+    try:
+        return jsonify(get_index_kline(symbol, tf, count))
+    except Exception as e:
+        return jsonify({"error": str(e), "symbol": symbol, "tf": tf, "kline": [], "volume": []}), 500
+
+
 @app.route("/api/dragon-tiger/history/<code>")
 def dragon_tiger_history(code):
     days = request.args.get("days", 365, type=int)
@@ -270,7 +285,7 @@ def scan_last():
 # ---------------------------------------------------------------------------
 @app.route("/api/sync/status")
 def sync_status():
-    """返回上次数据同步时间、同步统计与本地缓存状态。"""
+    """返回上次数据同步时间、同步统计、本地缓存状态与进行中的同步进度。"""
     st = get_sync_status()
     # 本地缓存文件数（供「本地数据」来源判断是否可用/置灰）
     cache_files = 0
@@ -284,11 +299,34 @@ def sync_status():
     except Exception:
         pass
     st["cache_files"] = cache_files
+    st["progress"] = {
+        "active": _SYNC_STATE["active"],
+        "done": _SYNC_STATE["done"],
+        "total": _SYNC_STATE["total"],
+        "msg": _SYNC_STATE["msg"],
+        "synced": _SYNC_STATE["synced"],
+        "failed": _SYNC_STATE["failed"],
+        "empty": _SYNC_STATE["empty"],
+        "error": _SYNC_STATE["error"],
+    }
     return jsonify(st)
 
 
 # 全局同步取消事件：POST /api/cancel-sync 置位，sync_incremental 的 cancel_cb 检查后中断
 _SYNC_CANCEL = threading.Event()
+
+# 同步进行状态（供前端轮询进度条）
+_SYNC_STATE = {
+    "active": False, "done": 0, "total": 0, "msg": "",
+    "synced": 0, "failed": 0, "empty": 0,
+    "last_sync": None, "error": None,
+}
+_SYNC_STATE_LOCK = threading.Lock()
+
+
+def _update_sync_state(**kw):
+    with _SYNC_STATE_LOCK:
+        _SYNC_STATE.update(kw)
 
 
 @app.route("/api/cancel-sync", methods=["POST"])
@@ -344,18 +382,51 @@ def sync_now():
             }), 500
     if not codes:
         return jsonify({"error": "股票池为空，无法同步", "synced": 0, "failed": 0, "empty": 0}), 400
-    try:
-        result = sync_incremental(codes, timeframes,
-                                  server=custom_server, source_kind=source_kind,
-                                  cancel_cb=lambda: _SYNC_CANCEL.is_set())
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({"error": f"同步失败：{e}", "synced": 0, "failed": 0, "empty": 0}), 500
+
+    # 已在同步则拒绝重复提交
+    if _SYNC_STATE["active"]:
+        return jsonify({"error": "已有同步任务进行中，请等待完成或先取消"}), 409
+
+    total_units = len(codes) * len(timeframes)
+    _update_sync_state(active=True, done=0, total=total_units, msg="准备中…",
+                       synced=0, failed=0, empty=0, last_sync=None, error=None)
+
+    def _run():
+        try:
+            def cb(done, total, msg):
+                _update_sync_state(done=done, total=total or total_units, msg=msg)
+            result = sync_incremental(codes, timeframes, progress_cb=cb,
+                                      server=custom_server, source_kind=source_kind,
+                                      cancel_cb=lambda: _SYNC_CANCEL.is_set())
+            _update_sync_state(
+                synced=result.get("synced", 0), failed=result.get("failed", 0),
+                empty=result.get("empty", 0), last_sync=result.get("last_sync"),
+            )
+        except Exception as e:
+            _update_sync_state(error=str(e))
+        finally:
+            _update_sync_state(active=False, msg="")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"started": True, "total": total_units})
 
 
 # ---------------------------------------------------------------------------
 # 个股研报
 # ---------------------------------------------------------------------------
+@app.route("/api/report/search")
+def report_search():
+    """按股票名称或代码模糊搜索（用于研报查询的股票选择）。"""
+    kw = request.args.get("kw", "").strip()
+    if not kw:
+        return jsonify({"results": []})
+    try:
+        from .reports import search_stocks
+        return jsonify({"kw": kw, "results": search_stocks(kw, limit=10)})
+    except Exception as e:
+        return jsonify({"error": str(e), "results": []}), 500
+
+
 @app.route("/api/report/<code>")
 def stock_reports(code):
     """获取个股最近一年研报列表。"""

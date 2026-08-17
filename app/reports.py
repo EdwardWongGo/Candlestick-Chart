@@ -89,14 +89,71 @@ def fetch_reports(code: str, days: int = 365, max_pages: int = 5) -> List[dict]:
         result.append({
             "title": r.get("title", ""),
             "date": (r.get("publishDate") or "")[:10],
-            "org": r.get("orgSName", ""),
+            "org": r.get("orgSName", "") or r.get("orgName", ""),
             "rating": r.get("emRatingName", "") or "",
+            "rating_change": _rating_change_text(r),
+            "author": _parse_authors(r.get("author") or r.get("researcher")),
             "industry": r.get("indvInduName", "") or "",
+            "target_price": r.get("indvAimPriceT"),
+            "target_low": r.get("indvAimPriceL"),
             "eps_this": r.get("predictThisYearEps"),
             "eps_next": r.get("predictNextYearEps"),
             "eps_next2": r.get("predictNextTwoYearEps"),
+            "stock_name": r.get("stockName", ""),
             "pdf_url": PDF_TPL.format(info_code=info_code) if info_code else "",
         })
 
     result.sort(key=lambda x: x["date"], reverse=True)
     return result
+
+
+def _rating_change_text(r: dict) -> str:
+    """评级变化：对比 emRatingValue 与 lastEmRatingValue，上调/下调；维持返回空。"""
+    cur, last = r.get("emRatingValue"), r.get("lastEmRatingValue")
+    try:
+        cur_f, last_f = float(cur), float(last)
+    except (TypeError, ValueError):
+        return ""
+    if last_f is None:
+        return ""
+    if cur_f > last_f:
+        return "上调"
+    if cur_f < last_f:
+        return "下调"
+    return ""
+
+
+def _parse_authors(raw) -> str:
+    """东财 author 形如 ['11000306631.孙山山', '11000311233.张向伟']，解析为人名列表。"""
+    if not raw:
+        return ""
+    import re
+    names = re.findall(r"\.([\u4e00-\u9fa5A-Za-z]+)", str(raw))
+    if names:
+        return "、".join(names)
+    return str(raw).strip("[]'\"").strip()
+
+
+def search_stocks(keyword: str, limit: int = 10) -> List[dict]:
+    """按股票名称或代码模糊搜索，返回 [{code, name}]（来自本地股票池）。"""
+    kw = (keyword or "").strip().upper()
+    if not kw:
+        return []
+    try:
+        from .data.universe import load_universe
+        u = load_universe()
+        codes = u.codes
+    except Exception:
+        return []
+    matched = []
+    for c in codes:
+        name = ""
+        try:
+            name = u.name_of(c) or ""
+        except Exception:
+            pass
+        if kw in str(c) or (name and kw in name.upper().replace(" ", "")):
+            matched.append({"code": c, "name": name})
+            if len(matched) >= limit:
+                break
+    return matched

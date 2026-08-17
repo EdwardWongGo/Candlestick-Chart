@@ -23,10 +23,21 @@ _INDICES = [
     {"symbol": "sh000001", "secid": "1.000001", "name": "上证指数"},
     {"symbol": "sz399001", "secid": "0.399001", "name": "深证成指"},
     {"symbol": "sz399006", "secid": "0.399006", "name": "创业板指"},
-    {"symbol": "sh000300", "secid": "1.000300", "name": "沪深300"},
     {"symbol": "sh000688", "secid": "1.000688", "name": "科创50"},
     {"symbol": "bj899050", "secid": "0.899050", "name": "北证50"},
+    {"symbol": "sh000300", "secid": "1.000300", "name": "沪深300"},
+    {"symbol": "sh000016", "secid": "1.000016", "name": "上证50"},
+    {"symbol": "sh000852", "secid": "1.000852", "name": "中证1000"},
 ]
+
+_INDEX_NAME = {i["symbol"]: i["name"] for i in _INDICES}
+
+# 腾讯 K 线时间级别 → (接口参数, 返回字段标签)
+_KLINE_TF = {
+    "day": ("day", "qfqday"),
+    "week": ("week", "qfqweek"),
+    "month": ("month", "qfqmonth"),
+}
 
 
 def _get_tencent_quotes() -> dict:
@@ -47,18 +58,49 @@ def _get_tencent_quotes() -> dict:
     return out
 
 
-def _get_index_kline(symbol: str, count: int = 5) -> list:
-    """腾讯指数日 K，返回升序 [[date, open, close, high, low, volume], ...]（qfq 与 day 兼容）。"""
+def _get_index_kline(symbol: str, tf: str = "day", count: int = 120) -> list:
+    """腾讯指数 K 线，返回升序 [[date, open, close, high, low, volume], ...]。
+
+    tf: day/week/month；qfq 与 day 兼容（指数无复权概念）。
+    """
+    if tf not in _KLINE_TF:
+        tf = "day"
+    param_tf, tag = _KLINE_TF[tf]
     try:
         r = requests.get(
             "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/fqkline/get",
-            params={"param": f"{symbol},day,,,{count},qfq"},
+            params={"param": f"{symbol},{param_tf},,,{count},qfq"},
             headers={"User-Agent": _UA, "Referer": "https://gu.qq.com/"}, timeout=8,
         )
         data = (r.json().get("data") or {}).get(symbol) or {}
-        return data.get("qfqday") or data.get("day") or []
+        rows = data.get(tag) or data.get(param_tf) or []
+        return rows
     except Exception:
         return []
+
+
+def get_index_kline(symbol: str, tf: str = "day", count: int = 120) -> dict:
+    """指数 K 线数据（含成交量），供前端 ECharts 渲染。"""
+    rows = _get_index_kline(symbol, tf, count)
+    kline = []
+    volume = []
+    for r in rows:
+        if len(r) < 6:
+            continue
+        try:
+            kline.append([r[0], float(r[1]), float(r[2]), float(r[3]), float(r[4])])
+            volume.append([r[0], float(r[5]), float(r[2])])   # [date, vol, close]（close 用于着色）
+        except (ValueError, IndexError):
+            continue
+    return {
+        "symbol": symbol,
+        "name": _INDEX_NAME.get(symbol, symbol),
+        "tf": tf,
+        "count": len(kline),
+        "kline": kline,
+        "volume": volume,
+        "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
 
 
 def _get_fund_flow() -> list:
@@ -120,7 +162,7 @@ def get_market_overview() -> dict:
         # 昨日成交量（取指数日 K 倒数第 2 根，单位：手）
         volume_yesterday = None
         try:
-            kline = _get_index_kline(idx["symbol"], 5)
+            kline = _get_index_kline(idx["symbol"], "day", 5)
             if len(kline) >= 2:
                 volume_yesterday = float(kline[-2][5])
         except Exception:
