@@ -496,6 +496,14 @@ body {
 .actions { display: flex; align-items: center; gap: 14px; }
 .resonance-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
 .resonance-toggle input { accent-color: var(--resonance); }
+/* 按股票分组：汇总行 + 明细行 */
+.group-head { cursor: pointer; background: rgba(59, 130, 246, .06); }
+.group-head:hover { background: rgba(59, 130, 246, .12); }
+.group-head.expanded { background: rgba(59, 130, 246, .16); }
+.group-detail { background: var(--bg-card); }
+.group-detail.hidden { display: none; }
+.group-detail:hover { background: var(--bg-hover, rgba(59, 130, 246, .08)); }
+.tag-group { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
 .ghost-btn {
   padding: 7px 14px; border-radius: 6px; cursor: pointer;
   background: var(--bg-card); border: 1px solid var(--border); color: var(--text);

@@ -79,6 +79,7 @@ const state = {
   sortKey: 'strength',   // 默认按信号强度排序
   sortDesc: true,
   resonanceOnly: false,
+  groupByStock: false,   // 按股票分组：同股多级别折叠为一行，点击展开明细
   page: 1,
   pageSize: 50,
   klineChart: null,
@@ -120,6 +121,11 @@ function bindEvents() {
   document.getElementById('patternClearAll').addEventListener('click', () => setAllPatterns(false));
   document.getElementById('resonanceOnly').addEventListener('change', (e) => {
     state.resonanceOnly = e.target.checked;
+    state.page = 1;
+    renderResults();
+  });
+  document.getElementById('groupByStock').addEventListener('change', (e) => {
+    state.groupByStock = e.target.checked;
     state.page = 1;
     renderResults();
   });
@@ -1118,6 +1124,13 @@ function renderResults() {
     const sa = String(va), sb = String(vb);
     return state.sortDesc ? sb.localeCompare(sa) : sa.localeCompare(sb);
   });
+
+  // 按股票分组模式：同股多级别折叠为一行（级别聚合），点击展开各级别明细
+  if (state.groupByStock) {
+    renderGroupedResults(list, get);
+    return;
+  }
+
   // 更新表头排序箭头
   document.querySelectorAll('th.sortable').forEach((th) => {
     const arrow = th.querySelector('.sort-arrow');
@@ -1179,6 +1192,120 @@ function renderResults() {
     tr.addEventListener('click', () => openKline(tr.dataset.code, tr.dataset.tf));
   });
 
+  updatePagination(total, state.page, totalPages);
+}
+
+// 按股票分组渲染：同股多级别折叠为一行（级别/形态聚合），点击汇总行展开各级别明细
+function renderGroupedResults(list, get) {
+  // 更新表头排序箭头（与普通模式一致）
+  document.querySelectorAll('th.sortable').forEach((th) => {
+    const arrow = th.querySelector('.sort-arrow');
+    if (th.dataset.key === state.sortKey) {
+      th.classList.add('sorted');
+      if (arrow) arrow.textContent = state.sortDesc ? '▾' : '▴';
+    } else {
+      th.classList.remove('sorted');
+      if (arrow) arrow.textContent = '';
+    }
+  });
+  renderStats();
+
+  // 按 code 分组
+  const groups = new Map();
+  for (const r of list) {
+    if (!groups.has(r.code)) groups.set(r.code, []);
+    groups.get(r.code).push(r);
+  }
+  const groupArr = [...groups.values()];
+  // 组排序：用组内「最强行」的值参与当前排序
+  const bestOf = (rows) => rows.reduce((x, y) => (y.strength > x.strength ? y : x), rows[0]);
+  groupArr.sort((a, b) => {
+    const va = get(bestOf(a)), vb = get(bestOf(b));
+    if (typeof va === 'number' && typeof vb === 'number') {
+      return state.sortDesc ? vb - va : va - vb;
+    }
+    const sa = String(va), sb = String(vb);
+    return state.sortDesc ? sb.localeCompare(sa) : sa.localeCompare(sb);
+  });
+
+  // 分页（按组数）
+  const total = groupArr.length;
+  const totalPages = Math.max(1, Math.ceil(total / state.pageSize));
+  if (state.page > totalPages) state.page = totalPages;
+  const start = (state.page - 1) * state.pageSize;
+  const pageGroups = groupArr.slice(start, start + state.pageSize);
+
+  const tbody = document.getElementById('resultBody');
+  const emptyState = document.getElementById('emptyState');
+  const table = document.getElementById('resultTable');
+  if (!total) {
+    emptyState.classList.remove('hidden');
+    table.classList.add('hidden');
+    tbody.innerHTML = '';
+    updatePagination(0, 1, 1);
+    return;
+  }
+  emptyState.classList.add('hidden');
+  table.classList.remove('hidden');
+
+  const TF_ORDER = { 日线: 0, 周线: 1, 月线: 2 };
+  const fmtYtd = (v) => (v != null ? `${v >= 0 ? '+' : ''}${v}%` : '—');
+  const ytdCls = (v) => ((v || 0) >= 0 ? 'num-up' : 'num-down');
+  const resoTag = (r) => r.resonance
+    ? '<span class="tag tag-resonance">共振</span>'
+    : '<span style="color:var(--text-faint)">—</span>';
+
+  const rowsHtml = pageGroups.map((rows) => {
+    const best = bestOf(rows);
+    const tfsZh = [...new Set(rows.map((r) => r.timeframe_zh))]
+      .sort((a, b) => (TF_ORDER[a] ?? 9) - (TF_ORDER[b] ?? 9))
+      .map((z) => z.replace('线', '')).join('');
+    const patterns = [...new Set(rows.map((r) => r.pattern_zh).filter(Boolean))].join('、');
+    const maxStrength = Math.max(...rows.map((r) => r.strength));
+    const maxVol = Math.max(...rows.map((r) => r.volume_ratio));
+    // 明细行（默认隐藏）
+    const detailRows = rows.map((r) => `
+      <tr class="group-detail hidden" data-code="${r.code}" data-tf="${r.timeframe}" title="点击查看该级别K线">
+        <td class="cell-code">${r.code}</td><td>${r.name}</td>
+        <td><span class="tag tag-tf">${r.market_zh || '—'}</span></td>
+        <td><span class="tag tag-tf">${r.timeframe_zh}</span></td>
+        <td>${r.pattern_zh}</td><td class="strength-cell">${r.strength}</td>
+        <td>${r.volume_ratio}×</td><td>${r.close.toFixed(2)}</td>
+        <td class="${ytdCls(r.ytd_change)}">${fmtYtd(r.ytd_change)}</td>
+        <td>${r.limit_1y || 0}</td><td>${resoTag(r)}</td>
+      </tr>`).join('');
+    // 汇总行
+    return `<tr class="group-head clickable" data-code="${best.code}" title="点击展开/收起该股各级别明细">
+      <td class="cell-code">${best.code}</td><td>${best.name}</td>
+      <td><span class="tag tag-tf">${best.market_zh || '—'}</span></td>
+      <td><span class="tag tag-tf tag-group">${tfsZh}</span></td>
+      <td>${patterns}</td><td class="strength-cell">${maxStrength}</td>
+      <td>${maxVol}×</td><td>${best.close.toFixed(2)}</td>
+      <td class="${ytdCls(best.ytd_change)}">${fmtYtd(best.ytd_change)}</td>
+      <td>${best.limit_1y || 0}</td><td>${resoTag(best)}</td>
+    </tr>${detailRows}`;
+  }).join('');
+
+  tbody.innerHTML = rowsHtml;
+  // 汇总行点击展开/收起明细
+  tbody.querySelectorAll('tr.group-head').forEach((tr) => {
+    tr.addEventListener('click', (e) => {
+      e.stopPropagation();
+      tr.classList.toggle('expanded');
+      let sib = tr.nextElementSibling;
+      while (sib && sib.classList.contains('group-detail')) {
+        sib.classList.toggle('hidden');
+        sib = sib.nextElementSibling;
+      }
+    });
+  });
+  // 明细行点击打开对应级别 K 线
+  tbody.querySelectorAll('tr.group-detail[data-code]').forEach((tr) => {
+    tr.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openKline(tr.dataset.code, tr.dataset.tf);
+    });
+  });
   updatePagination(total, state.page, totalPages);
 }
 
