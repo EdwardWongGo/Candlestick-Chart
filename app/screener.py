@@ -8,7 +8,6 @@
 3. 对命中结果套用附加过滤条件（放量倍数/价格/涨跌幅/相对位置/ST剔除）
 4. 跨级别共振：同一股票在 >= RESONANCE_MIN_LEVELS 个级别出现同方向信号 → 共振
 5. 信号强度 = 形态强度 × 级别权重 + 共振加成；按强度/时间排序
-6. 结果按个股合并去重：同一股票命中多级别合并为一行，级别字段聚合（如 日周月）
 
 Author: HZQ
 """
@@ -24,10 +23,6 @@ from .indicators import change_pct, above_ma250
 from .limit_analysis import count_limit_up
 from .data.source import get_source, get_quote_source
 from .data.cache import KlineCache
-
-# 级别显示顺序（合并时固定 日<周<月）
-TF_ORDER = {"daily": 0, "weekly": 1, "monthly": 2}
-_TF_ZH_ORDER = {"日线": 0, "周线": 1, "月线": 2}
 from .data.universe import load_universe, Universe
 
 
@@ -274,9 +269,6 @@ class Screener:
         # 4. 跨级别共振
         self._apply_resonance(results)
 
-        # 4.5 按个股合并去重：同一股票命中多级别合并为一行，级别字段聚合（如 日周月）
-        results = self._merge_by_code(results)
-
         # 5. 排序
         sort_by = params.get("sort_by", "strength")   # 默认按信号强度排序（涨跌幅列已移除）
         results = self._sort(results, sort_by)
@@ -294,7 +286,7 @@ class Screener:
             "sync_status": sync_status,              # 本次是否同步了服务器数据
             "stats": {
                 "total_samples": total_samples,       # 总样本数（进入形态扫描的股票）
-                "matched_rows": len(results),         # 命中股票数（已按个股合并去重，行数=股票数）
+                "matched_rows": len(results),         # 命中行数
                 "matched_stocks": matched_stocks,     # 命中股票数（去重）
                 "market_dist": market_dist,           # 市场分布 {market: count}
                 "ma250_above": ma250_above_count if check_ma250 else None,
@@ -404,73 +396,6 @@ class Screener:
                     r.resonance = True
                     r.resonance_levels = levels
                     r.strength = round(min(100.0, r.strength + config.RESONANCE_BONUS), 1)
-
-    def _merge_by_code(self, results: List[ScanResult]) -> List[ScanResult]:
-        """按个股合并去重：同一股票命中多级别/多形态合并为一行。
-
-        - 每只股票仅保留一行；timeframe_zh 聚合列出全部命中级别（固定 日<周<月 顺序，如 日周月）
-        - pattern_zh 聚合全部命中形态（按级别顺序）；strength/volume_ratio 取最强值，date 取最新
-        - direction 取最强信号行的方向；共振标记按合并后级别数判断（>=2 即共振）
-        - close/limit_1y/ytd_change 等个股级字段沿用最强信号行
-        """
-        merged: Dict[str, dict] = {}
-        for r in results:
-            ex = merged.get(r.code)
-            if ex is None:
-                merged[r.code] = {
-                    "best": r, "tfs": {r.timeframe},
-                    "tfs_zh": {r.timeframe_zh.replace("线", "")},
-                    "pattern_order": {r.pattern_zh: TF_ORDER.get(r.timeframe, 9)} if r.pattern_zh else {},
-                    "strength": r.strength, "volume_ratio": r.volume_ratio, "date": r.date,
-                }
-            else:
-                ex["tfs"].add(r.timeframe)
-                ex["tfs_zh"].add(r.timeframe_zh.replace("线", ""))
-                if r.pattern_zh:
-                    # 同名形态只记录一次（保留最小级别顺序，避免 锤子线/锤子线 重复）
-                    cur = ex["pattern_order"].get(r.pattern_zh)
-                    order = TF_ORDER.get(r.timeframe, 9)
-                    if cur is None or order < cur:
-                        ex["pattern_order"][r.pattern_zh] = order
-                ex["volume_ratio"] = max(ex["volume_ratio"], r.volume_ratio)
-                ex["date"] = max(ex["date"], r.date)
-                if r.strength > ex["strength"]:
-                    ex["strength"] = r.strength
-                    ex["best"] = r
-
-        out: List[ScanResult] = []
-        for ex in merged.values():
-            best = ex["best"]
-            tfs = sorted(ex["tfs"], key=lambda t: TF_ORDER.get(t, 9))
-            tfs_zh = "".join(sorted(ex["tfs_zh"], key=lambda z: _TF_ZH_ORDER.get(z + "线", 9)))
-            # 形态按级别顺序（同名去重）
-            pairs = sorted(ex["pattern_order"].items(), key=lambda kv: kv[1])
-            patterns = "、".join(p for p, _ in pairs if p) or best.pattern_zh
-            out.append(ScanResult(
-                code=best.code,
-                name=best.name,
-                market=best.market,
-                market_zh=best.market_zh,
-                timeframe=",".join(tfs),          # "daily,weekly,monthly"（前端可拆分）
-                timeframe_zh=tfs_zh,              # "日周月"
-                pattern_zh=patterns,
-                pattern_en=best.pattern_en,
-                direction=best.direction,
-                direction_zh=best.direction_zh,
-                date=ex["date"],
-                strength=ex["strength"],
-                volume_ratio=ex["volume_ratio"],
-                close=best.close,
-                change_pct=best.change_pct,
-                position=best.position,
-                position_label=best.position_label,
-                resonance=len(tfs) >= 2,
-                resonance_levels=list(tfs),
-                candle_indexes=list(best.candle_indexes),
-                limit_1y=best.limit_1y,
-                ytd_change=best.ytd_change,
-            ))
-        return out
 
     def _sort(self, results: List[ScanResult], sort_by: str) -> List[ScanResult]:
         if sort_by == "date":

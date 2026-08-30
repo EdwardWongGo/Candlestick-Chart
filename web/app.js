@@ -1100,7 +1100,7 @@ function renderResults() {
     code: (r) => r.code,
     name: (r) => r.name,
     market: (r) => r.market_zh || '',
-    timeframe: (r) => (r.timeframe || '').split(',').length,   // 按命中级别的数量排序
+    timeframe: (r) => r.timeframe,
     pattern: (r) => r.pattern_zh,
     strength: (r) => r.strength,
     volume_ratio: (r) => r.volume_ratio,
@@ -1176,8 +1176,7 @@ function renderResults() {
   }).join('');
 
   tbody.querySelectorAll('tr[data-code]').forEach((tr) => {
-    // 合并后的行可能命中多级别（data-tf 形如 daily,weekly），打开 K 线时用主级别（第一个）
-    tr.addEventListener('click', () => openKline(tr.dataset.code, (tr.dataset.tf || 'daily').split(',')[0]));
+    tr.addEventListener('click', () => openKline(tr.dataset.code, tr.dataset.tf));
   });
 
   updatePagination(total, state.page, totalPages);
@@ -1193,7 +1192,7 @@ function renderStats() {
   const dist = Object.entries(st.market_dist || {})
     .map(([k, v]) => `${marketZh(k)}${v}`).join(' · ');
 
-  let html = `总样本 <b>${st.total_samples}</b> 只 · 符合条件 <b>${st.matched_stocks}</b> 只（按个股合并，级别可多选）`;
+  let html = `总样本 <b>${st.total_samples}</b> 只 · 符合条件 <b>${st.matched_rows}</b> 条（<b>${st.matched_stocks}</b> 只）`;
   if (st.ma250_above != null) html += ` · 年线上 <b style="color:${C_DOWN}">${st.ma250_above}</b> 只`;
   html += ` · 看涨 ${upCount} / 看跌 ${downCount} · 共振 <b style="color:${C_RESONANCE}">${resonanceCount}</b>`;
   if (dist) html += `<br><span style="font-size:11px">样本分布：${dist}</span>`;
