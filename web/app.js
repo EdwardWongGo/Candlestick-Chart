@@ -81,7 +81,7 @@ const state = {
   resonanceOnly: false,
   groupByStock: false,   // 按股票分组：同股多级别折叠为一行，点击展开明细
   page: 1,
-  pageSize: 50,
+  pageSize: 15,   // 结果分页默认每页条数（15/30/50/100/200 可调）
   klineChart: null,
   eventTab: null,        // 当前市场事件模块
   eventData: null,       // 当前模块数据
