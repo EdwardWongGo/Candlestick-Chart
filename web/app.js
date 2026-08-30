@@ -1328,9 +1328,37 @@ function renderStats() {
 
 function updatePagination(total, page, totalPages) {
   document.getElementById('pageInfo').textContent = `共 ${total} 条 · 第 ${page}/${totalPages} 页`;
-  document.getElementById('pageNum').textContent = page;
   document.getElementById('prevPage').disabled = page <= 1;
   document.getElementById('nextPage').disabled = page >= totalPages;
+  // 数字页码导航（含省略号）
+  const nav = document.getElementById('pageNumbers');
+  if (!nav) return;
+  nav.innerHTML = buildPageNav(page, totalPages);
+  nav.querySelectorAll('.page-btn').forEach((b) => {
+    b.addEventListener('click', () => {
+      state.page = parseInt(b.dataset.page, 10);
+      renderResults();
+    });
+  });
+}
+
+// 生成页码按钮（1 … 当前页附近 … 末页）
+function buildPageNav(page, totalPages) {
+  if (totalPages <= 1) return '';
+  const pages = [];
+  const push = (p) => { if (p >= 1 && p <= totalPages && !pages.includes(p)) pages.push(p); };
+  push(1);
+  push(totalPages);
+  for (let p = page - 2; p <= page + 2; p++) push(p);
+  pages.sort((a, b) => a - b);
+  let html = '';
+  let prev = 0;
+  for (const p of pages) {
+    if (prev && p - prev > 1) html += '<span class="page-ellipsis">…</span>';
+    html += `<button class="page-btn ${p === page ? 'active' : ''}" data-page="${p}">${p}</button>`;
+    prev = p;
+  }
+  return html;
 }
 
 function marketZh(k) {
