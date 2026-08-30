@@ -50,20 +50,15 @@ def save_history(params: dict, result: dict) -> Optional[dict]:
 def _should_skip(rec: dict) -> bool:
     """判断历史记录是否应被屏蔽（不显示在列表中）。
 
-    屏蔽两类：
-    1. 同步服务器数据产生的记录（params.sync == True）
-    2. 自定义股票池产生的记录（params.custom_codes 非空，如导入 EBK 后的自动筛选）
+    仅屏蔽「同步服务器数据」产生的记录（params.sync == True）。
+    自定义股票池（上传文件/EBK 导入）筛选结果按需求正常保存并在历史中展示/复用。
     """
     params = rec.get("params") or {}
-    if params.get("sync"):
-        return True
-    if params.get("custom_codes"):
-        return True
-    return False
+    return bool(params.get("sync"))
 
 
 def list_history(limit: int = 100) -> List[dict]:
-    """列出所有历史记录摘要（按时间倒序，已屏蔽同步/自定义股票池记录）。"""
+    """列出所有历史记录摘要（按时间倒序，已屏蔽同步服务器数据记录）。"""
     if not os.path.isdir(HISTORY_DIR):
         return []
     files = sorted(

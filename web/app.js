@@ -440,7 +440,8 @@ function collectParams() {
     change_min: num('changeMin'),
     change_max: num('changeMax'),
     exclude_st: document.getElementById('excludeSt').checked,
-    custom_codes: state.customCodes.length ? state.customCodes : null,
+    // 仅「上传文件」来源才携带上传的股票池；本地/服务器来源必须基于完整数据从零筛选
+    custom_codes: (state.dataSource === 'upload' && state.customCodes.length) ? state.customCodes : null,
     sort_by: state.sortKey,
   };
   return params;
@@ -691,7 +692,28 @@ function onDataSourceChange() {
   document.getElementById('srcLocal').classList.toggle('hidden', val !== 'local');
   document.getElementById('srcServer').classList.toggle('hidden', val !== 'server');
   document.getElementById('srcUpload').classList.toggle('hidden', val !== 'upload');
-  // 数据来源切换仅切换面板，不自动筛选（筛选统一由「开始筛选」按钮触发）
+  // 切换到「本地数据/服务器」时必须清空上传的股票池与结果状态：
+  // 确保后续筛选基于完整数据集从零开始，绝不沿用或叠加上传文件的筛选范围/结果
+  if (val !== 'upload') {
+    if ((state.customCodes || []).length) {
+      state.customCodes = [];
+      state.importNames = {};
+    }
+    state.results = [];
+    state.scanStats = null;
+    state.lastParams = null;
+    state.viewingHistory = null;
+    document.getElementById('stats').textContent = '尚未扫描';
+    setTableColumns('full');
+    const table = document.getElementById('resultTable');
+    const empty = document.getElementById('emptyState');
+    if (table && empty) {
+      empty.classList.remove('hidden');
+      table.classList.add('hidden');
+      document.getElementById('resultBody').innerHTML = '';
+    }
+    updateResultButtons();
+  }
 }
 
 /**
