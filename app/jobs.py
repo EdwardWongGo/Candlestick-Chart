@@ -79,7 +79,6 @@ class JobManager:
             result = self._screener.scan(params, progress_cb=cb,
                                          cancel_cb=should_cancel)
             job["progress"] = 100
-            job["status"] = "done"
             job["message"] = f"扫描完成，命中 {result['total']} 条"
             job["result"] = result
             # 零命中处理：命中 0 条时不写结果缓存、不写历史记录，也不更新 last_result
@@ -91,11 +90,14 @@ class JobManager:
                     "ts": time.time(),
                 }
                 # 历史筛选结果：每次有效筛选（命中>0）完成后缓存到本地文件
+                # 必须在 status="done" 之前落盘，避免前端轮询到 done 后立刻
+                # loadHistory 时历史文件尚未写入（竞态），导致「当前结果不出现在历史」
                 try:
                     from .history import save_history
                     save_history(params, result)
                 except Exception:
                     pass
+            job["status"] = "done"
         except ScanCancelled:
             job["status"] = "cancelled"
             job["message"] = "已停止筛选"

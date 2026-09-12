@@ -253,15 +253,18 @@ function renderPatterns() {
     patterns.forEach((p) => {
       const item = document.createElement('div');
       item.className = 'pattern-item';
-      // 参数化形态（单阳不破/阳上不破）：提供 N 输入，不提供「验证」子选项
-      const paramCtrl = (p.params && p.params.N)
-        ? `<label class="pat-param" title="大阳线后连续 N 根不破，N 取值 ${p.params.N.min}-${p.params.N.max}">
+      // 参数化形态：N 输入框；无验证子选项（no_verify）：不显示任何子选项；其余：验证勾选
+      let paramCtrl = '';
+      if (p.params && p.params.N) {
+        paramCtrl = `<label class="pat-param" title="大阳线后连续 N 根不破，N 取值 ${p.params.N.min}-${p.params.N.max}">
             <span class="plabel">N</span>
             <input type="number" class="pat-n" data-key="${p.key}" min="${p.params.N.min}" max="${p.params.N.max}" step="1" value="${p.params.N.default}">
-          </label>`
-        : `<label class="pat-verify" title="勾选后追加 1 天验证日，仅保留通过验证的形态">
+          </label>`;
+      } else if (!p.no_verify) {
+        paramCtrl = `<label class="pat-verify" title="勾选后追加 1 天验证日，仅保留通过验证的形态">
             <input type="checkbox" class="verify-on" data-key="${p.key}"> 验证
           </label>`;
+      }
       item.innerHTML = `
         <label class="pat-main">
           <input type="checkbox" data-key="${p.key}" checked>
@@ -426,7 +429,7 @@ function clearImport() {
 
 // ===================== 收集参数 =====================
 function collectPatternParams() {
-  // 收集参数化形态（如单阳不破/阳上不破）的 N 参数，未勾选形态或非法值不纳入
+  // 收集参数化形态（如单阳不破）的 N 参数，未勾选形态或非法值不纳入
   const out = {};
   document.querySelectorAll('#patternList .pat-n[data-key]').forEach((inp) => {
     const key = inp.dataset.key;
@@ -464,7 +467,7 @@ function collectParams() {
     change_min: num('changeMin'),
     change_max: num('changeMax'),
     exclude_st: document.getElementById('excludeSt').checked,
-    // 参数化形态的运行时参数（如单阳不破/阳上不破的 N），未设置则为 null
+    // 参数化形态的运行时参数（如单阳不破的 N），未设置则为 null
     pattern_params: collectPatternParams(),
     // 仅「上传文件」来源才携带上传的股票池；本地/服务器来源必须基于完整数据从零筛选
     custom_codes: (state.dataSource === 'upload' && state.customCodes.length) ? state.customCodes : null,
@@ -510,6 +513,24 @@ async function startScan(params) {
   setScanning(true);
   state.scanStartTime = Date.now();
   state.lastParams = p;   // 记录本次参数，供「重新加载」复用
+  // 扫描开始时清空结果区，避免上一份结果（含历史视图「返回」按钮）残留误导；
+  // 扫描完成后由 finishScan → renderResults 重新渲染结果与分页
+  state.results = [];
+  state.scanStats = null;
+  state.scanElapsedMs = null;
+  state.viewingHistory = null;
+  document.getElementById('stats').textContent = '⏳ 扫描中…';
+  document.getElementById('pageInfo').textContent = '—';
+  document.getElementById('pageNumbers').innerHTML = '';
+  document.getElementById('prevPage').disabled = true;
+  document.getElementById('nextPage').disabled = true;
+  const emptyState = document.getElementById('emptyState');
+  const resultTable = document.getElementById('resultTable');
+  if (emptyState && resultTable) {
+    emptyState.classList.remove('hidden');
+    resultTable.classList.add('hidden');
+    document.getElementById('resultBody').innerHTML = '';
+  }
   showProgress(true, 0, '提交任务…');
 
   try {
@@ -581,19 +602,16 @@ function finishScan(result, error, errlog) {
     alert(msg);
     return;
   }
+  // 先记录耗时，再渲染结果：renderStats 内部一次性生成统计 + 耗时 + 「返回」按钮并绑定事件，
+  // 避免在此处二次重写 innerHTML 导致「返回」按钮的事件监听器丢失（点击无反应）
+  state.scanElapsedMs = (result && result.elapsed_ms != null) ? result.elapsed_ms : null;
   renderResults();
   state.viewingHistory = null;
-  // 在统计栏显示本次筛选总耗时（精确到毫秒）
-  const ms = (result && result.elapsed_ms != null) ? result.elapsed_ms : null;
-  const statsEl = document.getElementById('stats');
-  if (statsEl && ms != null) {
-    const cur = statsEl.innerHTML;
-    statsEl.innerHTML = `${cur}　·　⏱ 耗时 <b>${formatMs(ms)}</b>`;
-  }
   updateResultButtons();
-  // 筛选完成后刷新同步时间与历史结果栏
+  // 筛选完成后刷新同步时间与历史结果栏，并确保切回筛选结果视图（分页栏可见）
   initSyncStatus();
   loadHistory();
+  switchTab('screener');
 }
 
 function showProgress(show, pct, text) {
@@ -1027,7 +1045,7 @@ function applyLockedParams(params, source) {
       cb.checked = verifySel.has(cb.dataset.key);
       cb.disabled = false;
     });
-    // 恢复参数化形态（单阳不破/阳上不破）的 N 值
+    // 恢复参数化形态（单阳不破）的 N 值
     const pp = params.pattern_params || {};
     document.querySelectorAll('#patternList .pat-n[data-key]').forEach((inp) => {
       const v = (pp[inp.dataset.key] || {}).N;
@@ -1377,8 +1395,14 @@ function renderStats() {
   let html = `总样本 <b>${st.total_samples}</b> 只 · 符合条件 <b>${st.matched_rows}</b> 条（<b>${st.matched_stocks}</b> 只）`;
   if (st.ma250_above != null) html += ` · 年线上 <b style="color:${C_DOWN}">${st.ma250_above}</b> 只`;
   html += ` · 看涨 ${upCount} / 看跌 ${downCount} · 共振 <b style="color:${C_RESONANCE}">${resonanceCount}</b>`;
-  if (dist) html += `<br><span style="font-size:11px">样本分布：${dist}</span>`;
-  document.getElementById('stats').innerHTML = html;
+  // 本次筛选总耗时（精确到毫秒）
+  if (state.scanElapsedMs != null) html += `　·　⏱ 耗时 <b>${formatMs(state.scanElapsedMs)}</b>`;
+  // 样本分布放入 title 悬浮提示（单行显示，避免长文本撑高统计栏把分页栏挤出视口）
+  const title = dist ? `样本分布：${dist}` : '';
+  // 筛选结果视图也提供「返回」按钮（与历史结果视图一致，无箭头），点击清空结果回到空态
+  const backLink = `<a href="#" id="backToEmpty" style="color:var(--accent);margin-left:12px">返回</a>`;
+  document.getElementById('stats').innerHTML = `<span${title ? ` title="${title}"` : ''}>${html}</span>${backLink}`;
+  document.getElementById('backToEmpty').addEventListener('click', (e) => { e.preventDefault(); clearResult(); });
 }
 
 function updatePagination(total, page, totalPages) {

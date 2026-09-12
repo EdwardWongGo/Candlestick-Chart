@@ -230,7 +230,10 @@ body {
 }
 
 /* ===== 布局 ===== */
-.layout { display: flex; height: calc(100vh - 60px); }
+/* 高度改为自适应父容器（.tab-panel.active 已是 flex:1），不能写死 calc(100vh-60px)：
+   顶部实际是 topbar(60px)+tabs(44px)=104px，写死减 60px 会导致 layout 比可用空间高 44px，
+   底部（分页栏所在）被 body 的 overflow:hidden 裁掉 44px —— 即「分页栏不可见」的根因。 */
+.layout { display: flex; flex: 1; min-height: 0; }
 .sidebar {
   width: 320px; min-width: 320px;
   background: var(--bg-panel); border-right: 1px solid var(--border);
@@ -499,12 +502,18 @@ body {
 /* ===== 结果栏 ===== */
 .result-bar {
   display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
   padding: 12px 20px; border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
+  flex-shrink: 0;   /* 防止统计栏在窄窗口下被压缩导致分页栏被顶出视口 */
 }
-.stats { font-size: 12px; color: var(--text-dim); }
+.stats {
+  font-size: 12px; color: var(--text-dim); min-width: 0;
+  flex: 1 1 auto;                 /* 占据剩余宽度，供单行省略 */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .stats b { color: var(--text); }
-.actions { display: flex; align-items: center; gap: 14px; }
+.actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; flex-shrink: 0; }
 .resonance-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
 .resonance-toggle input { accent-color: var(--resonance); }
 /* 按股票分组：汇总行 + 明细行 */
@@ -528,6 +537,7 @@ body {
   display: flex; align-items: center; gap: 12px;
   padding: 8px 20px; border-bottom: 1px solid var(--border);
   background: var(--bg); overflow-x: auto; white-space: nowrap;
+  flex-shrink: 0;   /* 固定高度，防止被压缩 */
 }
 .history-title { font-size: 12px; color: var(--text-dim); flex-shrink: 0; }
 .history-list { display: flex; gap: 8px; align-items: center; }
@@ -667,6 +677,7 @@ body {
 .pagination-bar {
   display: flex; align-items: center; justify-content: space-between;
   padding: 10px 20px; border-top: 1px solid var(--border); background: var(--bg-panel);
+  flex-shrink: 0;   /* 防止被 flex 布局压缩/裁剪，确保分页栏始终可见 */
 }
 .page-info { font-size: 12px; color: var(--text-dim); }
 .page-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

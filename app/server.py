@@ -55,6 +55,16 @@ _jobs = JobManager()
 _cache = KlineCache()
 
 
+# 静态资源（页面/JS/CSS）禁用缓存，避免浏览器缓存旧版前端导致功能不一致
+@app.after_request
+def _no_cache_static(resp):
+    path = request.path or ""
+    if path == "/" or path.endswith((".html", ".js", ".css")):
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        resp.headers["Pragma"] = "no-cache"
+    return resp
+
+
 # ---------------------------------------------------------------------------
 # 元信息
 # ---------------------------------------------------------------------------
@@ -74,7 +84,8 @@ def meta():
             "direction": p.direction,
             "candles": p.candles,
             "desc": p.desc,
-            "params": p.params,   # 参数化形态的参数定义（如 {"N": {...}}），None 表示无参数
+            "params": p.params,        # 参数化形态的参数定义（如 {"N": {...}}），None 表示无参数
+            "no_verify": p.no_verify,  # True 表示不提供「验证」子选项
         })
     timeframes = [
         {"key": k, "zh": v["zh"], "weight": v["weight"], "desc": v["desc"]}

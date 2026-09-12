@@ -2,11 +2,12 @@
 """
 蜡烛图形态库与识别引擎
 
-内置形态（19 个，覆盖单根/双根/三根/参数化）：
+内置形态（19 个，覆盖单根/双根/三根/多根）：
   单根：锤子线、倒锤子线、上吊线、射击之星、十字星、蜻蜓十字、墓碑十字
   双根：看涨吞没、看跌吞没、刺透形态、乌云盖顶、看涨孕线、看跌孕线
   三根：启明星、黄昏星、三个白武士、三只乌鸦
-  参数化（N 可调 2-7）：单阳不破、阳上不破
+  多根（大阳线+3日确认）：单阳不破
+  多根（MA5）：疑似主升
 
 每个形态区分看涨(bullish)/看跌(bearish)方向，并输出 0-100 的信号强度。
 强度构成 = 基础可靠性 + 量能确认(放量倍数) + 趋势确认(反向趋势越深反转信号越强)。
@@ -336,17 +337,37 @@ def _three_black_crows(candles: List[Candle], i: int) -> Optional[float]:
 # 单阳不破族（大阳线 + 后续 N 根不破，N 为可配置参数 2-7）
 # ---------------------------------------------------------------------------
 def _is_big_yang(c: Candle, avg: float) -> bool:
-    """大阳线：阳线且实体 >= 1.2 倍平均实体（或涨幅 >= 3% 兜底）。"""
+    """大阳线（单阳不破专用）：阳线 + 实体达标 + 无上影线（可忽略）。
+
+    完整判定规则（三项全部满足才算大阳线）：
+    1. 阳线：收盘 > 开盘；
+    2. 实体达标：实体长度 >= 1.2 倍前 10 根均实体，或涨幅 >= 3% 兜底；
+    3. 无上影线（可忽略）：上影线长度 <= 实体长度的 5%。
+       —— 光头阳线（最高价 == 收盘价，上影线为 0）严格满足；
+          近似光头（上影线占比不超过实体 5%）视为「可忽略」通过；
+          带明显上影线（占比 > 5%）不满足。
+    """
     if not c.is_bullish or c.body <= 0:
         return False
-    if avg > 0 and c.body >= avg * 1.2:
-        return True
-    return c.change_pct >= 3.0
+    # 2. 实体达标（或涨幅兜底）
+    if not (c.body >= max(avg, 0.0) * 1.2 or c.change_pct >= 3.0):
+        return False
+    # 3. 无上影线（可忽略）：上影线不超过实体的 5%
+    if c.upper_shadow > c.body * 0.05:
+        return False
+    return True
 
 
-def _single_yang_no_break(candles: List[Candle], i: int, N: int) -> Optional[float]:
-    """单阳不破：大阳线后 N 根 K 线均未跌破该阳线最低价。i 为第 N 根之后的完成日。"""
-    j = i - N
+def _single_yang_no_break(candles: List[Candle], i: int) -> Optional[float]:
+    """单阳不破（单一固定规则，无子选项）：大阳线出现后，从第 3 天起判断是否成立。
+
+    判定流程：
+    - 完成日 i 为大阳线后第 3 根 K 线，即大阳线位于 j = i - 3；
+    - 大阳线需满足 _is_big_yang（阳线 + 实体达标 + 无上影线）；
+    - 大阳线后 3 根（i-2, i-1, i）的最低价均 >= 大阳线最低价 → 成立；
+    - 历史不足（i < 3）不成立。
+    """
+    j = i - 3
     if j < 0:
         return None
     yang = candles[j]
@@ -355,23 +376,29 @@ def _single_yang_no_break(candles: List[Candle], i: int, N: int) -> Optional[flo
     for k in range(j + 1, i + 1):
         if candles[k].low < yang.low:
             return None
-    quality = min(100.0, 64 + N * 4)   # 保持天数越多越强
+    quality = 76.0   # 固定 3 天确认
     return _score(quality, candles, i, _trend_bonus(base.prior_trend(candles, j)))
 
 
-def _yang_shang_no_break(candles: List[Candle], i: int, N: int) -> Optional[float]:
-    """阳上不破：大阳线后 N 根 K 线均未跌破该阳线最高价（更严格）。i 为第 N 根之后的完成日。"""
-    j = i - N
-    if j < 0:
+def _suspected_main_rise(candles: List[Candle], i: int) -> Optional[float]:
+    """疑似主升：最近 3 根 K 线收盘价均未跌破各自的 MA5（5 周期均线）。
+
+    主升浪特征：股价沿 MA5 强势上行，连续 3 根收盘都站在 MA5 之上。
+    """
+    if i < 5:   # MA5 至少需要 5 根历史
         return None
-    yang = candles[j]
-    if not _is_big_yang(yang, base.avg_body(candles, j, 10)):
-        return None
-    for k in range(j + 1, i + 1):
-        if candles[k].low < yang.high:
+    closes = [c.close for c in candles]
+    for j in range(i - 2, i + 1):   # 最近 3 根
+        ma5 = base.sma(closes[:j + 1], 5)
+        if ma5 is None or candles[j].close < ma5:
             return None
-    quality = min(100.0, 72 + N * 4)   # 更严格，基础分更高
-    return _score(quality, candles, i, _trend_bonus(base.prior_trend(candles, j)))
+    # 越接近 MA5 上方持续运行，强度越高；叠加 MA5 是否上翘
+    last_ma5 = base.sma(closes[:i + 1], 5)
+    prev_ma5 = base.sma(closes[:i], 5)
+    rising = (last_ma5 is not None and prev_ma5 is not None and last_ma5 >= prev_ma5)
+    quality = 70 + (4 if rising else 0)
+    return _score(min(100.0, quality), candles, i,
+                  _trend_bonus(base.prior_trend(candles, i) if base.prior_trend(candles, i) == "up" else None))
 
 
 # ---------------------------------------------------------------------------
@@ -383,10 +410,11 @@ class PatternDef:
     name_zh: str
     name_en: str
     direction: str          # bullish / bearish / neutral
-    candles: int            # 1 / 2 / 3
+    candles: int            # 1 / 2 / 3 / ...
     matcher: Callable[..., Optional[float]]
     desc: str = ""
     params: Optional[dict] = None   # 参数定义 {name: {min, max, default}}，None 表示无参数
+    no_verify: bool = False         # 不提供「验证」子选项（如单阳不破）
 
 
 PATTERNS: List[PatternDef] = [
@@ -427,13 +455,13 @@ PATTERNS: List[PatternDef] = [
                "三根连续大阳线，强势上攻"),
     PatternDef("three_black_crows", "三只乌鸦", "Three Black Crows", "bearish", 3, _three_black_crows,
                "三根连续大阴线，弱势下跌"),
-    # ---- 单阳不破族（大阳线 + 后续 N 根不破，N 参数 2-7）----
-    PatternDef("single_yang_no_break", "单阳不破", "Single Yang No Break", "bullish", 1, _single_yang_no_break,
-               "大阳线后 N 根 K 线未跌破其最低价，N 可调(2-7)",
-               params={"N": {"min": 2, "max": 7, "default": 3}}),
-    PatternDef("yang_shang_no_break", "阳上不破", "Yang Shang No Break", "bullish", 1, _yang_shang_no_break,
-               "大阳线后 N 根 K 线未跌破其最高价，N 可调(2-7)",
-               params={"N": {"min": 2, "max": 7, "default": 3}}),
+    # ---- 单阳不破（大阳线后第 3 天起判断，无子选项）----
+    PatternDef("single_yang_no_break", "单阳不破", "Single Yang No Break", "bullish", 4, _single_yang_no_break,
+               "大阳线（无上影线）后连续 3 根 K 线未跌破其最低价",
+               no_verify=True),
+    PatternDef("suspected_main_rise", "疑似主升", "Suspected Main Rise", "bullish", 3, _suspected_main_rise,
+               "最近 3 根 K 线收盘均未跌破各自 MA5（沿 5 周期均线强势上行）",
+               no_verify=True),
 ]
 
 _PATTERN_MAP = {p.key: p for p in PATTERNS}
@@ -497,12 +525,12 @@ def detect_patterns(candles: List[Candle], keys: Optional[List[str]] = None,
     n = len(candles)
     matches: List[PatternMatch] = []
     for pd in defs:
-        need_verify = pd.key in verify_set
+        need_verify = (pd.key in verify_set) and not pd.no_verify
         # 验证形态：完成日在倒数第二根，最后一根为验证日
         i = n - 2 if need_verify else n - 1
         if i < pd.candles - 1:
             continue
-        # 参数化形态：解析并 clamp N（如单阳不破/阳上不破）
+        # 参数化形态：解析并 clamp N（如单阳不破）
         N = None
         if pd.params and "N" in pd.params:
             spec = pd.params["N"]
