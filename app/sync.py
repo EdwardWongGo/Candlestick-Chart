@@ -5,7 +5,7 @@
 同步策略（增量）：
 - 本地已有缓存 → 仅拉取最近 N 根（SYNC_LOOKBACK），与本地最新日期对比后追加新 bar
 - 本地无缓存 → 全量拉取 KLINE_OFFSET 根并落盘
-- 同步完成后记录时间到 output/cache/sync_meta.json，供界面展示「上次同步时间」
+- 同步完成后记录时间到 data/sync_meta.json，供界面展示「上次同步时间」
 
 边界处理：
 - 停牌股：增量拉取无新 bar，属正常，跳过不报错

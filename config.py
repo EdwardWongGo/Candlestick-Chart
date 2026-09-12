@@ -118,7 +118,7 @@ RESONANCE_BONUS = 15
 # 行情快照：腾讯财经（名称、现价、涨跌幅等，HTTP，不封 IP）
 # 更新频率：
 #   - 日终批量扫描：每个交易日收盘后（约 15:00 之后）跑一次，扫描当日全市场
-#   - 数据缓存：K 线本地落盘缓存（output/cache/），同周期内重复扫描直接读缓存
+#   - 数据缓存：K 线本地落盘缓存（data/），同周期内重复扫描直接读缓存
 #   - 实时监控（预留）：数据层已抽象为 DataSource 接口，未来可接入盘中实时行情
 #     或分钟级 mootdx（category 7-11）做盘中定时轮询（扩展点见 app/data/source.py）
 DATA_SOURCE = "mootdx"            # 可选: mootdx | tencent
