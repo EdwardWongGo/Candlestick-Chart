@@ -2,10 +2,11 @@
 """
 蜡烛图形态库与识别引擎
 
-内置形态（17 个，覆盖单根/双根/三根）：
+内置形态（19 个，覆盖单根/双根/三根/参数化）：
   单根：锤子线、倒锤子线、上吊线、射击之星、十字星、蜻蜓十字、墓碑十字
   双根：看涨吞没、看跌吞没、刺透形态、乌云盖顶、看涨孕线、看跌孕线
   三根：启明星、黄昏星、三个白武士、三只乌鸦
+  参数化（N 可调 2-7）：单阳不破、阳上不破
 
 每个形态区分看涨(bullish)/看跌(bearish)方向，并输出 0-100 的信号强度。
 强度构成 = 基础可靠性 + 量能确认(放量倍数) + 趋势确认(反向趋势越深反转信号越强)。
@@ -332,6 +333,48 @@ def _three_black_crows(candles: List[Candle], i: int) -> Optional[float]:
 
 
 # ---------------------------------------------------------------------------
+# 单阳不破族（大阳线 + 后续 N 根不破，N 为可配置参数 2-7）
+# ---------------------------------------------------------------------------
+def _is_big_yang(c: Candle, avg: float) -> bool:
+    """大阳线：阳线且实体 >= 1.2 倍平均实体（或涨幅 >= 3% 兜底）。"""
+    if not c.is_bullish or c.body <= 0:
+        return False
+    if avg > 0 and c.body >= avg * 1.2:
+        return True
+    return c.change_pct >= 3.0
+
+
+def _single_yang_no_break(candles: List[Candle], i: int, N: int) -> Optional[float]:
+    """单阳不破：大阳线后 N 根 K 线均未跌破该阳线最低价。i 为第 N 根之后的完成日。"""
+    j = i - N
+    if j < 0:
+        return None
+    yang = candles[j]
+    if not _is_big_yang(yang, base.avg_body(candles, j, 10)):
+        return None
+    for k in range(j + 1, i + 1):
+        if candles[k].low < yang.low:
+            return None
+    quality = min(100.0, 64 + N * 4)   # 保持天数越多越强
+    return _score(quality, candles, i, _trend_bonus(base.prior_trend(candles, j)))
+
+
+def _yang_shang_no_break(candles: List[Candle], i: int, N: int) -> Optional[float]:
+    """阳上不破：大阳线后 N 根 K 线均未跌破该阳线最高价（更严格）。i 为第 N 根之后的完成日。"""
+    j = i - N
+    if j < 0:
+        return None
+    yang = candles[j]
+    if not _is_big_yang(yang, base.avg_body(candles, j, 10)):
+        return None
+    for k in range(j + 1, i + 1):
+        if candles[k].low < yang.high:
+            return None
+    quality = min(100.0, 72 + N * 4)   # 更严格，基础分更高
+    return _score(quality, candles, i, _trend_bonus(base.prior_trend(candles, j)))
+
+
+# ---------------------------------------------------------------------------
 # 形态注册表
 # ---------------------------------------------------------------------------
 @dataclass
@@ -339,10 +382,11 @@ class PatternDef:
     key: str
     name_zh: str
     name_en: str
-    direction: str          # bullish / bearish
+    direction: str          # bullish / bearish / neutral
     candles: int            # 1 / 2 / 3
-    matcher: Callable[[List[Candle], int], Optional[float]]
+    matcher: Callable[..., Optional[float]]
     desc: str = ""
+    params: Optional[dict] = None   # 参数定义 {name: {min, max, default}}，None 表示无参数
 
 
 PATTERNS: List[PatternDef] = [
@@ -383,6 +427,13 @@ PATTERNS: List[PatternDef] = [
                "三根连续大阳线，强势上攻"),
     PatternDef("three_black_crows", "三只乌鸦", "Three Black Crows", "bearish", 3, _three_black_crows,
                "三根连续大阴线，弱势下跌"),
+    # ---- 单阳不破族（大阳线 + 后续 N 根不破，N 参数 2-7）----
+    PatternDef("single_yang_no_break", "单阳不破", "Single Yang No Break", "bullish", 1, _single_yang_no_break,
+               "大阳线后 N 根 K 线未跌破其最低价，N 可调(2-7)",
+               params={"N": {"min": 2, "max": 7, "default": 3}}),
+    PatternDef("yang_shang_no_break", "阳上不破", "Yang Shang No Break", "bullish", 1, _yang_shang_no_break,
+               "大阳线后 N 根 K 线未跌破其最高价，N 可调(2-7)",
+               params={"N": {"min": 2, "max": 7, "default": 3}}),
 ]
 
 _PATTERN_MAP = {p.key: p for p in PATTERNS}
@@ -415,7 +466,8 @@ def _verify(candles: List[Candle], i: int, direction: str) -> bool:
 
 def detect_patterns(candles: List[Candle], keys: Optional[List[str]] = None,
                     lookback: int = 5,
-                    verify_keys: Optional[List[str]] = None) -> List[PatternMatch]:
+                    verify_keys: Optional[List[str]] = None,
+                    pattern_params: Optional[dict] = None) -> List[PatternMatch]:
     """对「最近连续交易日窗口」做形态判断。
 
     与全周期扫描不同，形态必须恰好完成于最近窗口内：
@@ -429,6 +481,8 @@ def detect_patterns(candles: List[Candle], keys: Optional[List[str]] = None,
     keys:    限定扫描的形态（None = 全部）
     verify_keys: 需要验证的形态 key 列表（勾选「验证」的形态）
     lookback: 兼容旧签名保留，不再用于往回扫描。
+    pattern_params: 参数化形态的运行时参数，如 {"single_yang_no_break": {"N": 3}}；
+                    未传或缺失时使用形态声明中的默认值，并 clamp 到声明范围。
 
     返回命中的 PatternMatch 列表（每个形态最多 1 次命中）。
     """
@@ -448,7 +502,19 @@ def detect_patterns(candles: List[Candle], keys: Optional[List[str]] = None,
         i = n - 2 if need_verify else n - 1
         if i < pd.candles - 1:
             continue
-        strength = pd.matcher(candles, i)
+        # 参数化形态：解析并 clamp N（如单阳不破/阳上不破）
+        N = None
+        if pd.params and "N" in pd.params:
+            spec = pd.params["N"]
+            raw = (pattern_params or {}).get(pd.key, {}).get("N", spec.get("default", 3))
+            try:
+                N = int(raw)
+            except (TypeError, ValueError):
+                N = int(spec.get("default", 3))
+            N = max(int(spec.get("min", 2)), min(int(spec.get("max", 7)), N))
+            strength = pd.matcher(candles, i, N)
+        else:
+            strength = pd.matcher(candles, i)
         if strength is None:
             continue
 
@@ -468,7 +534,11 @@ def detect_patterns(candles: List[Candle], keys: Optional[List[str]] = None,
             continue
 
         k = candles[i]
-        idxs = list(range(i - pd.candles + 1, i + 1))
+        # 参数化形态（单阳不破族）：高亮覆盖大阳线 + 后续 N 根；其余按 candles 字段
+        if N is not None:
+            idxs = list(range(i - N, i + 1))
+        else:
+            idxs = list(range(i - pd.candles + 1, i + 1))
         if need_verify:
             idxs.append(n - 1)   # 追加验证日
         matches.append(PatternMatch(

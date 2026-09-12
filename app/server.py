@@ -74,6 +74,7 @@ def meta():
             "direction": p.direction,
             "candles": p.candles,
             "desc": p.desc,
+            "params": p.params,   # 参数化形态的参数定义（如 {"N": {...}}），None 表示无参数
         })
     timeframes = [
         {"key": k, "zh": v["zh"], "weight": v["weight"], "desc": v["desc"]}

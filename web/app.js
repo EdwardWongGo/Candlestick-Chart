@@ -253,14 +253,21 @@ function renderPatterns() {
     patterns.forEach((p) => {
       const item = document.createElement('div');
       item.className = 'pattern-item';
+      // 参数化形态（单阳不破/阳上不破）：提供 N 输入，不提供「验证」子选项
+      const paramCtrl = (p.params && p.params.N)
+        ? `<label class="pat-param" title="大阳线后连续 N 根不破，N 取值 ${p.params.N.min}-${p.params.N.max}">
+            <span class="plabel">N</span>
+            <input type="number" class="pat-n" data-key="${p.key}" min="${p.params.N.min}" max="${p.params.N.max}" step="1" value="${p.params.N.default}">
+          </label>`
+        : `<label class="pat-verify" title="勾选后追加 1 天验证日，仅保留通过验证的形态">
+            <input type="checkbox" class="verify-on" data-key="${p.key}"> 验证
+          </label>`;
       item.innerHTML = `
         <label class="pat-main">
           <input type="checkbox" data-key="${p.key}" checked>
           <span class="pname">${p.name_zh} <span class="pdir" style="color:${C_DIM}">${p.name_en}</span></span>
         </label>
-        <label class="pat-verify" title="勾选后追加 1 天验证日，仅保留通过验证的形态">
-          <input type="checkbox" class="verify-on" data-key="${p.key}"> 验证
-        </label>`;
+        ${paramCtrl}`;
       gwrap.appendChild(item);
     });
     box.appendChild(gwrap);
@@ -418,6 +425,23 @@ function clearImport() {
 }
 
 // ===================== 收集参数 =====================
+function collectPatternParams() {
+  // 收集参数化形态（如单阳不破/阳上不破）的 N 参数，未勾选形态或非法值不纳入
+  const out = {};
+  document.querySelectorAll('#patternList .pat-n[data-key]').forEach((inp) => {
+    const key = inp.dataset.key;
+    const mainCb = document.querySelector(`#patternList .pat-main input[data-key="${key}"]`);
+    if (mainCb && !mainCb.checked) return;   // 未勾选该形态则跳过
+    let v = parseInt(inp.value, 10);
+    const lo = parseInt(inp.min, 10) || 2;
+    const hi = parseInt(inp.max, 10) || 7;
+    if (isNaN(v)) v = 3;
+    v = Math.max(lo, Math.min(hi, v));       // clamp 到 2-7
+    out[key] = { N: v };
+  });
+  return Object.keys(out).length ? out : null;
+}
+
 function collectParams() {
   const timeframes = [...document.querySelectorAll('#timeframeChips .chip.active')].map((c) => c.dataset.key);
   const markets = [...document.querySelectorAll('#marketChips .chip.active')].map((c) => c.dataset.key);
@@ -440,6 +464,8 @@ function collectParams() {
     change_min: num('changeMin'),
     change_max: num('changeMax'),
     exclude_st: document.getElementById('excludeSt').checked,
+    // 参数化形态的运行时参数（如单阳不破/阳上不破的 N），未设置则为 null
+    pattern_params: collectPatternParams(),
     // 仅「上传文件」来源才携带上传的股票池；本地/服务器来源必须基于完整数据从零筛选
     custom_codes: (state.dataSource === 'upload' && state.customCodes.length) ? state.customCodes : null,
     sort_by: state.sortKey,
@@ -1000,6 +1026,13 @@ function applyLockedParams(params, source) {
     document.querySelectorAll('#patternList .verify-on').forEach((cb) => {
       cb.checked = verifySel.has(cb.dataset.key);
       cb.disabled = false;
+    });
+    // 恢复参数化形态（单阳不破/阳上不破）的 N 值
+    const pp = params.pattern_params || {};
+    document.querySelectorAll('#patternList .pat-n[data-key]').forEach((inp) => {
+      const v = (pp[inp.dataset.key] || {}).N;
+      if (v != null) inp.value = v;
+      inp.disabled = false;
     });
     const pats = params.patterns || [];
     const hasBull = pats.some((k) => (state.meta.patterns.find((p) => p.key === k) || {}).direction === 'bullish');

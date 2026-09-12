@@ -411,6 +411,17 @@ body {
 }
 .pattern-item .pat-verify:hover { color: var(--accent); border-color: var(--accent); }
 .pattern-item .pat-verify:has(input:checked) { color: var(--accent); }
+.pattern-item .pat-param {
+  display: flex; align-items: center; gap: 4px; flex-shrink: 0;
+  font-size: 11px; color: var(--text-dim);
+}
+.pattern-item .pat-param .plabel { font-weight: 600; color: var(--text); }
+.pattern-item .pat-param .pat-n {
+  width: 44px; padding: 2px 6px; border-radius: 4px; font-size: 12px;
+  background: var(--bg-card); border: 1px solid var(--border); color: var(--text);
+  text-align: center; outline: none;
+}
+.pattern-item .pat-param .pat-n:focus { border-color: var(--accent); }
 .dir-up { color: var(--up); }
 .dir-down { color: var(--down); }
 .dir-neutral { color: var(--text-dim); }
