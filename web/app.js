@@ -19,6 +19,7 @@ const API = {
   export: '/api/export',
   exportEbk: '/api/export/ebk',
   board: (kind, date) => `/api/board/${kind}${date ? '?date=' + date : ''}`,
+  actionAnalysis: (date) => `/api/action-analysis${date ? '?date=' + date : ''}`,
   ladder: (date) => `/api/ladder${date ? '?date=' + date : ''}`,
   ladderDown: () => '/api/ladder-down',
   dragonTiger: (date) => `/api/dragon-tiger${date ? '?date=' + date : ''}`,
@@ -59,9 +60,9 @@ const state = {
   scanStats: null,
   scanElapsedMs: null,  // 本次筛选总耗时（毫秒）
   viewingHistory: null,  // 当前查看的历史记录 {id, ts}，null=非历史视图
-  lockedParams: null,    // 锁定的历史筛选条件（基于历史记录继续筛选时锁定，只能追加）
-  lockSource: null,      // 锁定来源描述（历史记录时间）
-  showAllDims: false,    // 是否展开全部筛选维度（历史精简视图下默认收起未用维度）
+  lockedPatterns: new Set(),     // 选中历史结果后锁定的形态 key（置灰 + 禁改）
+  lockedVerify: new Set(),       // 锁定形态中勾选「验证」的 key
+  lockedPatternParams: {},       // 锁定参数化形态的运行时参数 {key: {N}}
   marketIdx: 'sh000001', // 市场分析：当前指数
   marketTf: 'day',       // 市场分析：日/周/月
   marketChart: null,     // 市场分析 K 线图实例
@@ -267,10 +268,14 @@ function renderPatterns() {
       }
       item.innerHTML = `
         <label class="pat-main">
-          <input type="checkbox" data-key="${p.key}" checked>
+          <input type="checkbox" data-key="${p.key}">
           <span class="pname">${p.name_zh} <span class="pdir" style="color:${C_DIM}">${p.name_en}</span></span>
         </label>
         ${paramCtrl}`;
+      // 悬停显示形态解释半透明框
+      item.addEventListener('mouseenter', (e) => showPatternTip(p, e));
+      item.addEventListener('mousemove', (e) => movePatternTip(e));
+      item.addEventListener('mouseleave', hidePatternTip);
       gwrap.appendChild(item);
     });
     box.appendChild(gwrap);
@@ -281,42 +286,183 @@ function renderPatterns() {
   });
   // 看涨/看跌形态单选互斥
   setupPatternDirToggle();
+  // 若已处于「历史结果锁定形态」状态（重渲染后），立即恢复锁定
+  if (state.lockedPatterns && state.lockedPatterns.size) applyPatternLock();
 }
 
 function dirZh(d) { return d === 'bullish' ? '看涨' : (d === 'bearish' ? '看跌' : '中性'); }
 
-// 看涨/看跌形态单选互斥：选一个方向自动隐藏另一个方向（中性组始终显示）
+// 形态悬停提示（半透明框，解释形态含义）
+let _patternTipEl = null;
+function _ensurePatternTip() {
+  if (!_patternTipEl) {
+    _patternTipEl = document.createElement('div');
+    _patternTipEl.className = 'pattern-tip';
+    document.body.appendChild(_patternTipEl);
+  }
+  return _patternTipEl;
+}
+function _positionPatternTip(e) {
+  const tip = _patternTipEl;
+  if (!tip) return;
+  const pad = 14;
+  let x = e.clientX + pad;
+  let y = e.clientY + pad;
+  const r = tip.getBoundingClientRect();
+  if (x + r.width > window.innerWidth - 8) x = e.clientX - r.width - pad;
+  if (y + r.height > window.innerHeight - 8) y = e.clientY - r.height - pad;
+  tip.style.left = Math.max(8, x) + 'px';
+  tip.style.top = Math.max(8, y) + 'px';
+}
+function showPatternTip(p, e) {
+  const tip = _ensurePatternTip();
+  const dir = dirZh(p.direction);
+  const dirColor = p.direction === 'bullish' ? C_UP : (p.direction === 'bearish' ? C_DOWN : C_ACCENT);
+  const sampleSvg = renderPatternSampleSvg(p.sample);
+  tip.innerHTML = `
+    <div class="pt-head"><b>${p.name_zh}</b><span style="color:${C_DIM}">${p.name_en}</span><span style="color:${dirColor}">${dir}</span></div>
+    ${sampleSvg ? `<div class="pt-sample-wrap">${sampleSvg}</div>` : ''}
+    <div class="pt-body">${p.desc || ''}</div>
+    <div class="pt-foot">${p.candles} 根 K 线形态</div>`;
+  tip.classList.add('show');
+  _positionPatternTip(e);
+}
+
+// 根据示例 K 线数据绘制蜡烛图 SVG（阳线红、阴线绿，含影线与实体）
+function renderPatternSampleSvg(sample) {
+  if (!sample || !sample.length) return '';
+  const W = 132, H = 62;
+  const n = sample.length;
+  const gap = W / n;
+  const bodyW = Math.min(15, gap * 0.55);
+  let lo = Infinity, hi = -Infinity;
+  sample.forEach((k) => { lo = Math.min(lo, k.l); hi = Math.max(hi, k.h); });
+  const range = (hi - lo) || 1;
+  const pad = range * 0.12;
+  lo -= pad; hi += pad;
+  const y = (p) => H - ((p - lo) / (hi - lo)) * H;
+  let inner = '';
+  sample.forEach((k, i) => {
+    const cx = gap * i + gap / 2;
+    const up = k.c >= k.o;
+    const color = up ? C_UP : C_DOWN;
+    const yO = y(k.o), yC = y(k.c), yH = y(k.h), yL = y(k.l);
+    inner += `<line x1="${cx}" y1="${yH}" x2="${cx}" y2="${yL}" stroke="${color}" stroke-width="1.2"/>`;
+    const top = Math.min(yO, yC);
+    const hh = Math.max(1, Math.abs(yO - yC));
+    inner += `<rect x="${cx - bodyW / 2}" y="${top}" width="${bodyW}" height="${hh}" fill="${color}"/>`;
+  });
+  return `<svg class="pt-sample" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${inner}</svg>`;
+}
+function movePatternTip(e) {
+  if (_patternTipEl && _patternTipEl.classList.contains('show')) _positionPatternTip(e);
+}
+function hidePatternTip() {
+  if (_patternTipEl) _patternTipEl.classList.remove('show');
+}
+
+// 看涨/看跌形态单选互斥：选一个方向自动隐藏另一个方向（中性组始终显示）。
+// 若有锁定形态（来自历史结果），则按锁定形态方向强制互斥：锁定看涨隐藏看跌、锁定看跌隐藏看涨。
 let _updateDirectionExclusion = null;
+
+// 计算锁定形态的「方向」：bullish/bearish/both/none（用于方向互斥）
+function lockedPatternsDir() {
+  const keys = [...(state.lockedPatterns || [])];
+  if (!keys.length) return 'none';
+  const meta = (state.meta && state.meta.patterns) || [];
+  let hasBull = false, hasBear = false;
+  keys.forEach((k) => {
+    const p = meta.find((x) => x.key === k);
+    if (!p) return;
+    if (p.direction === 'bullish') hasBull = true;
+    if (p.direction === 'bearish') hasBear = true;
+  });
+  if (hasBull && hasBear) return 'both';
+  if (hasBull) return 'bullish';
+  if (hasBear) return 'bearish';
+  return 'none';
+}
+
+// 将历史结果中已选中的形态锁定（置灰 + 禁改），子选项（验证/N）一并冻结，再应用方向互斥
+function applyPatternLock() {
+  document.querySelectorAll('#patternList .pattern-item').forEach((item) => {
+    const cb = item.querySelector('.pat-main input[data-key]');
+    if (!cb) return;
+    const key = cb.dataset.key;
+    const locked = (state.lockedPatterns || new Set()).has(key);
+    if (locked) cb.checked = true;      // 锁定项强制勾选（反映历史结果）
+    cb.disabled = locked;
+    item.classList.toggle('locked', locked);
+    const verify = item.querySelector('.verify-on[data-key]');
+    if (verify) {
+      verify.disabled = locked;
+      if (locked) verify.checked = (state.lockedVerify || new Set()).has(key);
+    }
+    const n = item.querySelector('.pat-n[data-key]');
+    if (n) {
+      n.disabled = locked;
+      if (locked && state.lockedPatternParams && state.lockedPatternParams[key]) {
+        n.value = state.lockedPatternParams[key].N;
+      }
+    }
+  });
+  if (_updateDirectionExclusion) _updateDirectionExclusion();
+}
+
+// 解除形态锁定：恢复可编辑（保留勾选状态），重新启用方向单选
+function unlockPatterns() {
+  state.lockedPatterns = new Set();
+  state.lockedVerify = new Set();
+  state.lockedPatternParams = {};
+  document.querySelectorAll('#patternList .pattern-item.locked').forEach((item) => {
+    item.classList.remove('locked');
+    item.querySelectorAll('input').forEach((inp) => { inp.disabled = false; });
+  });
+  if (_updateDirectionExclusion) _updateDirectionExclusion();
+}
+
 function setupPatternDirToggle() {
   const bullGroup = document.querySelector('.pattern-group[data-dir="bullish"]');
   const bearGroup = document.querySelector('.pattern-group[data-dir="bearish"]');
 
   const update = () => {
-    const val = document.querySelector('input[name="patternDir"]:checked')?.value || 'bullish';
-    if (val === 'bullish') {
-      bullGroup && bullGroup.classList.remove('hidden-group');
-      bearGroup && bearGroup.classList.add('hidden-group');
-      // 清空隐藏组的勾选，避免被 collectParams 收集
-      bearGroup && bearGroup.querySelectorAll('.pat-main input').forEach((cb) => { cb.checked = false; });
-    } else {
-      bearGroup && bearGroup.classList.remove('hidden-group');
-      bullGroup && bullGroup.classList.add('hidden-group');
-      bullGroup && bullGroup.querySelectorAll('.pat-main input').forEach((cb) => { cb.checked = false; });
+    const lockDir = lockedPatternsDir();
+    const radios = document.querySelectorAll('input[name="patternDir"]');
+    let showBull, showBear;
+    if (lockDir === 'bullish') { showBull = true; showBear = false; }
+    else if (lockDir === 'bearish') { showBull = false; showBear = true; }
+    else if (lockDir === 'both') { showBull = true; showBear = true; }
+    else {
+      const val = radios.length ? (document.querySelector('input[name="patternDir"]:checked')?.value || 'bullish') : 'bullish';
+      showBull = val === 'bullish';
+      showBear = val === 'bearish';
     }
+    // 锁定单向时：方向单选禁用并同步到锁定方向（不可切到相反方向）
+    const forced = lockDir === 'bullish' || lockDir === 'bearish';
+    radios.forEach((r) => {
+      r.disabled = forced;
+      if (forced) r.checked = (r.value === lockDir);
+    });
+    bullGroup && bullGroup.classList.toggle('hidden-group', !showBull);
+    bearGroup && bearGroup.classList.toggle('hidden-group', !showBear);
+    // 清空隐藏组的勾选（锁定项除外，避免丢失锁定选择）
+    if (!showBear) bearGroup && bearGroup.querySelectorAll('.pat-main input').forEach((cb) => { if (!cb.disabled) cb.checked = false; });
+    if (!showBull) bullGroup && bullGroup.querySelectorAll('.pat-main input').forEach((cb) => { if (!cb.disabled) cb.checked = false; });
   };
   _updateDirectionExclusion = update;
   document.querySelectorAll('input[name="patternDir"]').forEach((r) => r.addEventListener('change', update));
+  update();   // 初始化即应用一次互斥（默认「看涨」隐藏看跌组）
 }
 
 function setAllPatterns(checked) {
-  // 单选模式下只操作「当前显示方向组」的形态（隐藏组不参与）
-  document.querySelectorAll('#patternList .pattern-group:not(.hidden-group) .pat-main input[type=checkbox]').forEach((cb) => { cb.checked = checked; });
+  // 单选模式下只操作「当前显示方向组」的形态（隐藏组不参与）；锁定（disabled）项跳过，保持不可修改
+  document.querySelectorAll('#patternList .pattern-group:not(.hidden-group) .pat-main input[type=checkbox]').forEach((cb) => { if (!cb.disabled) cb.checked = checked; });
 }
 
 function toggleGroup(direction) {
   const gw = document.querySelector(`.pattern-group[data-dir="${direction}"]`);
   if (!gw) return;
-  const cbs = [...gw.querySelectorAll('.pat-main input[type=checkbox]')];
+  const cbs = [...gw.querySelectorAll('.pat-main input[type=checkbox]')].filter((cb) => !cb.disabled);
   if (!cbs.length) return;
   const allChecked = cbs.every((cb) => cb.checked);
   cbs.forEach((cb) => { cb.checked = !allChecked; });   // 全选→清空，否则→全选
@@ -508,6 +654,7 @@ async function startScan(params) {
   // （防御：点击事件监听若误传 Event 对象，也会回退到 collectParams）
   const p = (params && Array.isArray(params.timeframes)) ? params : collectParams();
   if (!p.timeframes || !p.timeframes.length) { alert('请至少选择一个时间级别'); return; }
+  if (!p.patterns || !p.patterns.length) { alert('请至少选择一个蜡烛图形态'); return; }
   if (state.scanning) return;   // 防止重复提交
 
   setScanning(true);
@@ -635,13 +782,13 @@ function reloadScan() {
   startScan(state.lastParams);
 }
 
-// 清空当前结果，回到「暂无结果」空状态（从历史视图返回，同时解除条件锁定）
+// 清空当前结果，回到「暂无结果」空状态（从历史视图返回）
 function clearResult() {
   state.results = [];
   state.scanStats = null;
   state.viewingHistory = null;
   state.page = 1;
-  if (state.lockedParams) unlockParams();  // 返回空状态即解除锁定
+  unlockPatterns();            // 离开历史视图，解除形态锁定、恢复方向单选
   setDataSourceVisible(true);  // 离开历史视图，恢复显示「数据来源」选择项
   document.querySelectorAll('.history-item.selected').forEach((el) => el.classList.remove('selected'));
   renderResults();
@@ -980,12 +1127,17 @@ async function loadHistoryItem(id) {
     state.page = 1;
     // 历史数据视图：隐藏「数据来源」选择项，避免误操作
     setDataSourceVisible(false);
+    // 锁定该历史结果中已选中的形态（置灰 + 禁改），并按锁定方向做看涨/看跌互斥
+    const hp = d.params || {};
+    state.lockedPatterns = new Set(Array.isArray(hp.patterns) ? hp.patterns : []);
+    state.lockedVerify = new Set(Array.isArray(hp.verify_patterns) ? hp.verify_patterns : []);
+    state.lockedPatternParams = (hp.pattern_params && typeof hp.pattern_params === 'object') ? hp.pattern_params : {};
+    applyPatternLock();
     // 高亮选中的历史记录项（标识当前操作对象）
     document.querySelectorAll('.history-item').forEach((el) => {
       el.classList.toggle('selected', el.dataset.id === id);
     });
-    // 基于历史记录继续筛选：仅保留已用条件维度（回填原值可调整），隐藏未用维度
-    applyLockedParams(d.params || {}, d.ts || '');
+    // 历史数据视图：加载结果展示（形态已按上方锁定，其余条件保持用户当前选择）
     renderResults();
     updateResultButtons();
     // 统计栏提示当前查看的是历史结果
@@ -1001,172 +1153,6 @@ async function loadHistoryItem(id) {
   }
 }
 
-// ===================== 筛选条件精简（基于历史记录继续筛选） =====================
-// 原则：仅保留历史记录中「已使用」的条件维度（回填原值，可调整），
-//       未使用过的维度隐藏（可展开），避免展示无关条件造成干扰。
-function applyLockedParams(params, source) {
-  state.lockedParams = params;
-  state.lockSource = source;
-  state.showAllDims = false;
-
-  // 时间级别：已用则回填可调，未用则隐藏
-  const tfUsed = (params.timeframes || []).length > 0;
-  markDim('panelTimeframe', tfUsed);
-  if (tfUsed) {
-    const tfSel = new Set(params.timeframes || []);
-    document.querySelectorAll('#timeframeChips .chip').forEach((chip) => {
-      chip.classList.toggle('active', tfSel.has(chip.dataset.key));
-      chip.classList.remove('locked');
-    });
-  }
-
-  // 市场：已用则回填可调，未用则隐藏
-  const mkUsed = (params.markets || []).length > 0;
-  markDim('panelMarket', mkUsed);
-  if (mkUsed) {
-    const mkSel = new Set(params.markets || []);
-    document.querySelectorAll('#marketChips .chip').forEach((chip) => {
-      chip.classList.toggle('active', mkSel.has(chip.dataset.key));
-      chip.classList.remove('locked');
-    });
-  }
-
-  // 形态：已用则回填可调，未用则隐藏
-  const patUsed = !!(params.patterns && params.patterns.length);
-  markDim('panelPattern', patUsed);
-  if (patUsed) {
-    const patSel = new Set(params.patterns || []);
-    document.querySelectorAll('#patternList .pat-main input[type=checkbox]').forEach((cb) => {
-      cb.checked = patSel.has(cb.dataset.key);
-      cb.disabled = false;
-    });
-    const verifySel = new Set(params.verify_patterns || []);
-    document.querySelectorAll('#patternList .verify-on').forEach((cb) => {
-      cb.checked = verifySel.has(cb.dataset.key);
-      cb.disabled = false;
-    });
-    // 恢复参数化形态（单阳不破）的 N 值
-    const pp = params.pattern_params || {};
-    document.querySelectorAll('#patternList .pat-n[data-key]').forEach((inp) => {
-      const v = (pp[inp.dataset.key] || {}).N;
-      if (v != null) inp.value = v;
-      inp.disabled = false;
-    });
-    const pats = params.patterns || [];
-    const hasBull = pats.some((k) => (state.meta.patterns.find((p) => p.key === k) || {}).direction === 'bullish');
-    const hasBear = pats.some((k) => (state.meta.patterns.find((p) => p.key === k) || {}).direction === 'bearish');
-    const dirRadio = document.querySelector(`input[name="patternDir"][value="${hasBear && !hasBull ? 'bearish' : 'bullish'}"]`);
-    if (dirRadio) dirRadio.checked = true;
-    if (_updateDirectionExclusion) _updateDirectionExclusion();
-  }
-
-  // 附加条件：逐个字段判断「已用/未用」，已用回填可调，未用隐藏
-  const extraUsed = {
-    above_ma250: !!params.above_ma250,
-    limit_up_count_min: params.limit_up_count_min != null,
-    volume_min: params.volume_min != null,
-    price: (params.price_min != null || params.price_max != null),
-    change: (params.change_min != null || params.change_max != null),
-    exclude_st: params.exclude_st === false,   // 仅「主动取消剔除 ST」算已用
-  };
-  document.querySelectorAll('.extra-item[data-extra]').forEach((item) => {
-    const used = !!extraUsed[item.dataset.extra];
-    item.classList.toggle('hidden', !used);
-    item.dataset.dimHidden = used ? 'false' : 'true';
-  });
-  // 回填附加条件值（可调整，不锁定）
-  document.getElementById('aboveMa250').checked = !!params.above_ma250;
-  document.getElementById('aboveMa250').disabled = false;
-  const numBack = (id, v) => { const el = document.getElementById(id); if (el) { el.value = (v != null) ? v : ''; el.disabled = false; } };
-  numBack('limitUpCountMin', params.limit_up_count_min);
-  numBack('volumeMin', params.volume_min);
-  numBack('priceMin', params.price_min);
-  numBack('priceMax', params.price_max);
-  numBack('changeMin', params.change_min);
-  numBack('changeMax', params.change_max);
-  document.getElementById('excludeSt').checked = params.exclude_st !== false;
-  document.getElementById('excludeSt').disabled = false;
-
-  // 「附加筛选条件」面板：所有子项都未用时隐藏整个面板
-  const extraPanel = document.getElementById('panelExtra');
-  const anyExtraVisible = [...extraPanel.querySelectorAll('.extra-item')].some((el) => !el.classList.contains('hidden'));
-  extraPanel.classList.toggle('hidden', !anyExtraVisible);
-  extraPanel.dataset.dimHidden = anyExtraVisible ? 'false' : 'true';
-
-  showLockBar(source);
-  renderLockBar();
-}
-
-// 标记某个维度面板是否「已用」：已用显示，未用隐藏（记 data-dim-hidden 供展开用）
-function markDim(id, used) {
-  const panel = document.getElementById(id);
-  if (!panel) return;
-  panel.classList.toggle('hidden', !used);
-  panel.dataset.dimHidden = used ? 'false' : 'true';
-}
-
-// 展开/收起所有未用维度
-function toggleAllDims() {
-  state.showAllDims = !state.showAllDims;
-  document.querySelectorAll('[data-dim-hidden="true"]').forEach((el) => {
-    el.classList.toggle('hidden', !state.showAllDims);
-  });
-  renderLockBar();
-}
-
-// 渲染锁定提示条（含展开/解除入口）
-function renderLockBar() {
-  const bar = document.getElementById('lockBar');
-  if (!bar) return;
-  const expanded = state.showAllDims;
-  bar.innerHTML = `📌 已按历史条件精简维度 <b>${state.lockSource}</b>（已用条件可调整）
-    <a href="#" id="toggleAllDims">${expanded ? '收起条件' : '＋ 展开全部条件'}</a>
-    <a href="#" id="unlockBtn">解除锁定</a>`;
-  document.getElementById('toggleAllDims').addEventListener('click', (e) => { e.preventDefault(); toggleAllDims(); });
-  document.getElementById('unlockBtn').addEventListener('click', (e) => { e.preventDefault(); unlockParams(); });
-}
-
-function unlockParams() {
-  state.lockedParams = null;
-  state.lockSource = null;
-  state.showAllDims = false;
-  // 恢复所有维度显示（移除 hidden 与 data-dim-hidden）
-  document.querySelectorAll('[data-dim-hidden]').forEach((el) => {
-    el.classList.remove('hidden');
-    delete el.dataset.dimHidden;
-  });
-  document.querySelectorAll('.chip.locked').forEach((c) => c.classList.remove('locked'));
-  document.querySelectorAll('#patternList input[type=checkbox]').forEach((cb) => { cb.disabled = false; });
-  ['limitUpCountMin', 'volumeMin', 'priceMin', 'priceMax', 'changeMin', 'changeMax',
-   'aboveMa250', 'excludeSt'].forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) el.disabled = false;
-  });
-  // 恢复单选按钮为「看涨」并重新应用隐藏逻辑
-  const bullRadio = document.querySelector('input[name="patternDir"][value="bullish"]');
-  if (bullRadio) bullRadio.checked = true;
-  if (_updateDirectionExclusion) _updateDirectionExclusion();
-  // 恢复「开始筛选」入口可用
-  document.getElementById('scanBtn').disabled = false;
-  hideLockBar();
-}
-
-function showLockBar(source) {
-  // 仅负责创建锁定提示条元素，具体内容与绑定由 renderLockBar 统一处理
-  let bar = document.getElementById('lockBar');
-  if (!bar) {
-    bar = document.createElement('div');
-    bar.id = 'lockBar';
-    bar.className = 'lock-bar';
-    const sidebar = document.querySelector('.sidebar');
-    sidebar.insertBefore(bar, sidebar.firstChild);
-  }
-}
-
-function hideLockBar() {
-  const bar = document.getElementById('lockBar');
-  if (bar) bar.remove();
-}
 
 // ===================== 结果渲染（含分页/统计） =====================
 function renderResults() {
@@ -1494,6 +1480,8 @@ const SUB_TABS = {
   zt: [
     { key: 'board', zh: '封板涨停' },
     { key: 'opened', zh: '涨停打开' },
+    { key: 'picture', zh: '涨停简图' },
+    { key: 'action', zh: '异动解析' },
   ],
   dt: [
     { key: 'board', zh: '封板跌停' },
@@ -1592,9 +1580,15 @@ async function loadEvent(tab) {
     }
     let data;
     if (tab === 'zt') {
-      data = sub === 'opened'
-        ? await (await fetchTimeout(API.opened('up'), {}, 90000)).json()   // 全市场扫描，放宽超时
-        : await (await fetchTimeout(API.board('zt', date))).json();
+      if (sub === 'opened') {
+        data = await (await fetchTimeout(API.opened('up'), {}, 90000)).json();   // 全市场扫描，放宽超时
+      } else if (sub === 'picture') {
+        data = await (await fetchTimeout(API.board('picture', date))).json();
+      } else if (sub === 'action') {
+        data = await (await fetchTimeout(API.actionAnalysis(date))).json();
+      } else {
+        data = await (await fetchTimeout(API.board('zt', date))).json();
+      }
     } else if (tab === 'dt') {
       data = sub === 'opened'
         ? await (await fetchTimeout(API.opened('down'), {}, 90000)).json()
@@ -1636,6 +1630,8 @@ async function loadEvent(tab) {
 function renderEventData(tab, sub, data) {
   if (tab === 'zt') {
     if (sub === 'opened') renderOpened('up', data);
+    else if (sub === 'picture') renderPicture(data);
+    else if (sub === 'action') renderActionAnalysis(data);
     else renderBoard('zt', data);
   } else if (tab === 'dt') {
     if (sub === 'opened') renderOpened('down', data);
@@ -1733,6 +1729,127 @@ function renderBoardTable(kind, d) {
       renderBoardTable(kind, d);
     });
   });
+  document.querySelectorAll('#eventContent tr[data-code]').forEach((tr) => {
+    tr.addEventListener('click', () => openKline(tr.dataset.code, 'daily'));
+  });
+}
+
+// 涨停简图：按题材（行业）聚类分组的涨停复盘表（形似韭研公社涨停简图）
+function renderPicture(d) {
+  const st = d.stats || {};
+  document.getElementById('eventStats').innerHTML =
+    `<b>${d.date}</b> · 涨停 <b style="color:${C_UP}">${st.limit_up ?? d.total ?? 0}</b> 家 · ` +
+    `连板 <b>${st.ladder ?? 0}</b> 家 · 炸板 <b>${st.broken ?? 0}</b> 家`;
+
+  const groups = d.picture || [];
+  if (!groups.length) {
+    document.getElementById('eventContent').innerHTML =
+      `<div class="event-empty" style="padding:60px;text-align:center;color:var(--text-faint)">当日无涨停数据</div>`;
+    return;
+  }
+
+  const themeRows = groups.map((g) => {
+    const rows = (g.stocks || []).map((s) => {
+      const boardTag = (s.boards >= 2)
+        ? `<span class="tag tag-up">${s.boards}板</span>`
+        : '<span style="color:var(--text-faint)">首板</span>';
+      const mcap = (s.float_mcap != null) ? Number(s.float_mcap).toFixed(1) : '—';
+      const amt = (s.amount != null) ? (Number(s.amount) / 10000).toFixed(1) : '—';  // 万 → 亿
+      const kw = s.reason || s.industry || '—';
+      return `<tr class="clickable" data-code="${s.code}">
+        <td>${boardTag}</td>
+        <td class="cell-code">${s.code}</td>
+        <td>${s.name}</td>
+        <td>${s.first_time || '—'}</td>
+        <td>${mcap}</td>
+        <td>${amt}</td>
+        <td class="reason-cell">${kw}</td>
+      </tr>`;
+    }).join('');
+    return `<tr class="pic-theme"><td colspan="7"><b>${g.theme}</b> <span style="color:var(--text-dim)">× ${g.count}</span></td></tr>${rows}`;
+  }).join('');
+
+  const header = `<th>板数</th><th>代码</th><th>名称</th><th>涨停时间</th><th>流通市值(亿)</th><th>成交额(亿)</th><th>涨停关键词</th>`;
+  document.getElementById('eventContent').innerHTML =
+    `<div class="table-scroll"><table class="event-table"><thead><tr>${header}</tr></thead><tbody>${themeRows}</tbody></table></div>`;
+
+  document.querySelectorAll('#eventContent tr[data-code]').forEach((tr) => {
+    tr.addEventListener('click', () => openKline(tr.dataset.code, 'daily'));
+  });
+}
+
+// 异动解析：情绪指标 + 晋级率 + 一字板 + 连板梯队断层（形似韭研公社「异动解析」）
+function renderActionAnalysis(d) {
+  const s = d.sentiment || {};
+  document.getElementById('eventStats').innerHTML =
+    `<b>${d.date}</b> · 异动解析（晋级率对比昨日 <b>${d.yesterday || '—'}</b>）`;
+
+  const cards = [
+    { label: '涨停', value: s.limit_up ?? '—', color: C_UP },
+    { label: '跌停', value: s.limit_down ?? '—', color: C_DOWN },
+    { label: '最高连板', value: (s.max_boards ? s.max_boards + '板' : '—'), color: C_UP },
+    { label: '炸板回封', value: (s.broken ?? '—'), color: C_RESONANCE },
+  ];
+  const cardHtml = cards.map((c) => `
+    <div class="action-card">
+      <div class="action-num" style="color:${c.color || 'var(--text)'}">${c.value}</div>
+      <div class="action-lbl">${c.label}</div>
+    </div>`).join('');
+
+  const promo = (d.promotion || []).map((p) => {
+    const rate = (p.rate != null) ? p.rate + '%' : '—';
+    const hot = (p.rate != null && p.rate >= 50) ? ` style="color:${C_UP}"` : '';
+    return `<span class="action-promo"><b>${p.from}进${p.to}</b> <span${hot}>${rate}</span> <span style="color:var(--text-faint)">(${p.today}/${p.yesterday})</span></span>`;
+  }).join('');
+
+  const ladder = (d.ladder_gap || []).map((g) =>
+    `<span class="action-ladder"><b>${g.boards}板</b><span style="color:var(--text-dim)">×${g.count}</span></span>`).join(' <span style="color:var(--text-faint)">→</span> ');
+
+  const ow = d.one_word || {};
+  const upRows = (ow.up || []).map((s) => {
+    const tag = s.boards >= 2 ? `<span class="tag tag-up">${s.boards}板</span>` : '<span style="color:var(--text-faint)">首板</span>';
+    return `<tr class="clickable" data-code="${s.code}">
+      <td class="cell-code">${s.code}</td><td>${s.name}</td><td>${tag}</td>
+      <td>${s.float_mcap != null ? Number(s.float_mcap).toFixed(1) : '—'}</td>
+      <td class="reason-cell">${s.reason || s.industry || '—'}</td></tr>`;
+  }).join('');
+  const downRows = (ow.down || []).map((s) => {
+    const tag = s.boards >= 2 ? `<span class="tag tag-down">${s.boards}连跌</span>` : '<span style="color:var(--text-faint)">首日</span>';
+    return `<tr class="clickable" data-code="${s.code}">
+      <td class="cell-code">${s.code}</td><td>${s.name}</td><td>${tag}</td>
+      <td>${s.float_mcap != null ? Number(s.float_mcap).toFixed(1) : '—'}</td>
+      <td class="reason-cell">${s.reason || s.industry || '—'}</td></tr>`;
+  }).join('');
+
+  const owHead = `<th>代码</th><th>名称</th><th>板数</th><th>流通市值(亿)</th><th>关键词</th>`;
+  const upTable = upRows
+    ? `<div class="table-scroll"><table class="event-table"><thead><tr>${owHead}</tr></thead><tbody>${upRows}</tbody></table></div>`
+    : '<div style="color:var(--text-faint);padding:8px 0">无</div>';
+  const downTable = downRows
+    ? `<div class="table-scroll"><table class="event-table"><thead><tr>${owHead}</tr></thead><tbody>${downRows}</tbody></table></div>`
+    : '<div style="color:var(--text-faint);padding:8px 0">无</div>';
+
+  document.getElementById('eventContent').innerHTML = `
+    <div class="action-wrap">
+      <div class="action-cards">${cardHtml}</div>
+      <div class="action-section">
+        <div class="action-sec-title">连板晋级率</div>
+        <div class="action-promos">${promo || '<span style="color:var(--text-faint)">无数据</span>'}</div>
+      </div>
+      <div class="action-section">
+        <div class="action-sec-title">连板梯队</div>
+        <div class="action-ladders">${ladder || '<span style="color:var(--text-faint)">无连板</span>'}</div>
+      </div>
+      <div class="action-section">
+        <div class="action-sec-title">一字涨停（${(ow.up || []).length} 只）</div>
+        ${upTable}
+      </div>
+      <div class="action-section">
+        <div class="action-sec-title">一字跌停（${(ow.down || []).length} 只）</div>
+        ${downTable}
+      </div>
+    </div>`;
+
   document.querySelectorAll('#eventContent tr[data-code]').forEach((tr) => {
     tr.addEventListener('click', () => openKline(tr.dataset.code, 'daily'));
   });

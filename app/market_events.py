@@ -110,6 +110,21 @@ def latest_trade_date(max_back: int = 5) -> str:
     return result
 
 
+def _prev_trade_date(date_dashed: str, max_back: int = 10) -> str:
+    """返回 date_dashed 之前最近的一个交易日。
+
+    注意：东财涨跌停池的 `qdate` 对历史日期请求会始终返回「最新交易日」，
+    只有 `pool` 是请求日期的数据，故这里用「pool 非空」判断该日是否有交易。
+    """
+    d = datetime.strptime(date_dashed, "%Y-%m-%d")
+    for _ in range(max_back):
+        d -= timedelta(days=1)
+        pool, _ = _fetch_limit_pool("wz.ztzt", _to_yyyymmdd(d.strftime("%Y-%m-%d")))
+        if pool:
+            return d.strftime("%Y-%m-%d")
+    return date_dashed
+
+
 # ---------------------------------------------------------------------------
 # 东财涨跌停池
 # ---------------------------------------------------------------------------
@@ -257,6 +272,114 @@ def _first_theme(reason: str) -> str:
         return ""
     tags = [t.strip() for t in reason.split("+") if t.strip()]
     return tags[0] if tags else ""
+
+
+def get_limit_picture(date_dashed: str = None) -> dict:
+    """涨停简图：按题材（行业）聚类分组的涨停复盘表 + 底部统计。
+
+    形似韭研公社「涨停简图」：把当日涨停股按题材板块分组，每组列出
+    板数/代码/名称/涨停时间/流通市值/成交额/涨停关键词，底部附统计行。
+    """
+    date_dashed = date_dashed or latest_trade_date()
+    ymd = _to_yyyymmdd(date_dashed)
+    pool, qdate = _fetch_limit_pool("wz.ztzt", ymd)
+    actual = _yyyymmdd_to_dashed(qdate) if qdate else date_dashed
+    reason_map = fetch_reasons(actual)
+    stocks = _pool_to_stocks(pool, reason_map)
+
+    # 按题材（东财行业）聚类；行业为空时用涨停原因首词兜底，仍空归「其他」
+    groups: dict = {}
+    for s in stocks:
+        theme = (s.get("industry") or "").strip() or _first_theme(s.get("reason", "")) or "其他"
+        groups.setdefault(theme, []).append(s)
+
+    picture = []
+    for theme, items in groups.items():
+        # 组内：连板数降序，同连板按首次封板时间升序（高标在前、早封板在前）
+        items.sort(key=lambda x: (-(x.get("boards") or 0), x.get("first_time") or "99:99:99"))
+        picture.append({"theme": theme, "count": len(items), "stocks": items})
+    # 组间：按股票数降序（主线板块在前）
+    picture.sort(key=lambda g: -g["count"])
+
+    total = len(stocks)
+    ladder_count = sum(1 for s in stocks if (s.get("boards") or 0) >= 2)
+    broken_count = sum(1 for s in stocks if (s.get("break_count") or 0) > 0)
+
+    return {
+        "date": actual,
+        "total": total,
+        "picture": picture,
+        "stats": {
+            "limit_up": total,
+            "ladder": ladder_count,
+            "broken": broken_count,
+        },
+    }
+
+
+def get_action_analysis(date_dashed: str = None) -> dict:
+    """异动解析：情绪指标 + 一字板 + 连板梯队断层（形似韭研公社「异动解析」）。
+
+    情绪指标 = 涨停/跌停家数、连板最高高度、封板率/破板率；
+    晋级率 = 今日 N 连板数 ÷ 昨日 (N-1) 连板数（跨日对比昨日涨停池）；
+    一字板 = 集合竞价即封板（fbt=09:25:00）且全天无炸板（zbc=0）。
+    """
+    today = date_dashed or latest_trade_date()
+    ymd = _to_yyyymmdd(today)
+
+    up_pool, up_qdate = _fetch_limit_pool("wz.ztzt", ymd)
+    down_pool, _ = _fetch_limit_pool("wz.dtzt", ymd)
+    actual = _yyyymmdd_to_dashed(up_qdate) if up_qdate else today
+    reason_map = fetch_reasons(actual)
+    up_stocks = _pool_to_stocks(up_pool, reason_map)
+    down_stocks = _pool_to_stocks(down_pool, {})
+
+    limit_up = len(up_stocks)
+    limit_down = len(down_stocks)
+    max_boards = max((s["boards"] for s in up_stocks), default=0)
+    # 炸板回封：涨停池内炸板次数 > 0 的股票（曾开板又封回）。
+    # 注：东财炸板池 wz.zbzt 近期返回空，故「炸板未封」无法可靠统计，这里以「炸板回封」近似炸板活跃度。
+    broken = sum(1 for s in up_stocks if (s["break_count"] or 0) > 0)
+
+    def cnt(stocks, b):
+        return sum(1 for s in stocks if (s["boards"] or 0) == b)
+
+    # 晋级率：今日 N 连板 / 昨日 (N-1) 连板
+    yesterday = _prev_trade_date(actual)
+    y_pool, _ = _fetch_limit_pool("wz.ztzt", _to_yyyymmdd(yesterday))
+    y_stocks = _pool_to_stocks(y_pool, {})
+    promotion = []
+    for b in range(2, 7):
+        base = cnt(y_stocks, b - 1)
+        today_cnt = cnt(up_stocks, b)
+        promotion.append({
+            "from": b - 1, "to": b,
+            "today": today_cnt, "yesterday": base,
+            "rate": round(today_cnt / base * 100, 1) if base else None,
+        })
+
+    # 一字板：集合竞价即封板且全天无炸板
+    one_word_up = [s for s in up_stocks if s["first_time"] == "09:25:00" and (s["break_count"] or 0) == 0]
+    one_word_down = [s for s in down_stocks if s["first_time"] == "09:25:00" and (s["break_count"] or 0) == 0]
+
+    # 连板梯队（含断层）
+    ladder_gap = []
+    for b in sorted({s["boards"] for s in up_stocks if (s["boards"] or 0) >= 1}, reverse=True):
+        ladder_gap.append({"boards": b, "count": cnt(up_stocks, b)})
+
+    return {
+        "date": actual,
+        "yesterday": yesterday,
+        "sentiment": {
+            "limit_up": limit_up,
+            "limit_down": limit_down,
+            "max_boards": max_boards,
+            "broken": broken,
+        },
+        "promotion": promotion,
+        "one_word": {"up": one_word_up, "down": one_word_down},
+        "ladder_gap": ladder_gap,
+    }
 
 
 # ---------------------------------------------------------------------------

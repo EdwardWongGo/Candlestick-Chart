@@ -145,6 +145,32 @@ body {
 .event-table tbody tr:hover { background: var(--bg-hover); }
 .event-table tbody tr.clickable { cursor: pointer; }
 .reason-cell { max-width: 360px; white-space: normal; line-height: 1.5; color: var(--text-dim); }
+/* 涨停简图：题材分组头行 */
+.pic-theme td {
+  background: var(--bg-hover); color: var(--text);
+  font-size: 13px; font-weight: 600; text-align: left;
+  border-top: 1px solid var(--border);
+}
+
+/* 异动解析 */
+.action-wrap { padding: 16px 20px; display: flex; flex-direction: column; gap: 18px; }
+.action-cards { display: flex; flex-wrap: wrap; gap: 12px; }
+.action-card {
+  flex: 1 1 120px; min-width: 110px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 14px; text-align: center;
+}
+.action-num { font-size: 20px; font-weight: 700; }
+.action-lbl { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+.action-section { display: flex; flex-direction: column; gap: 8px; }
+.action-sec-title { font-size: 13px; font-weight: 600; color: var(--text); border-left: 3px solid var(--accent); padding-left: 8px; }
+.action-promos { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+.action-promo { font-size: 12px; color: var(--text-dim); }
+.action-ladders { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 12px; }
+.action-ladder {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 6px; padding: 4px 10px;
+}
 
 /* 连板天梯 */
 .ladder-group { margin: 12px 20px; }
@@ -366,20 +392,6 @@ body {
 }
 .chip:hover { border-color: var(--accent); color: var(--text); }
 .chip.active { background: var(--accent-bg); border-color: var(--accent); color: #bcd4ff; }
-.chip.locked {
-  cursor: not-allowed; opacity: .65;
-  background: var(--accent-bg); border-color: var(--accent); color: #bcd4ff;
-  position: relative;
-}
-.chip.locked::after { content: '🔒'; font-size: 9px; margin-left: 4px; opacity: .8; }
-/* 锁定提示栏 */
-.lock-bar {
-  padding: 8px 12px; margin-bottom: 10px; border-radius: 6px;
-  background: var(--accent-bg); border: 1px solid var(--accent);
-  font-size: 12px; color: #bcd4ff; line-height: 1.5;
-}
-.lock-bar a { color: #fff; font-weight: 600; text-decoration: underline; }
-.lock-bar b { color: #fff; }
 
 /* ===== 形态列表 ===== */
 .pattern-list { max-height: 260px; overflow-y: auto; }
@@ -425,6 +437,37 @@ body {
   text-align: center; outline: none;
 }
 .pattern-item .pat-param .pat-n:focus { border-color: var(--accent); }
+
+/* 历史结果锁定形态：置灰 + 禁改 */
+.pattern-item.locked { opacity: .55; }
+.pattern-item.locked .pat-main,
+.pattern-item.locked .pat-verify,
+.pattern-item.locked .pat-param { cursor: not-allowed; }
+.pattern-item.locked .pname::after { content: ' 🔒'; font-size: 10px; opacity: .9; }
+
+/* 形态悬停提示（半透明框，解释形态含义） */
+.pattern-tip {
+  position: fixed; z-index: 9999;
+  max-width: 300px;
+  padding: 10px 12px;
+  background: rgba(22, 27, 38, 0.94);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  color: var(--text);
+  font-size: 12px; line-height: 1.6;
+  pointer-events: none;
+  opacity: 0; transform: translateY(6px);
+  transition: opacity .16s ease, transform .16s ease;
+}
+.pattern-tip.show { opacity: 1; transform: translateY(0); }
+.pattern-tip .pt-head { display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px; }
+.pattern-tip .pt-head b { font-size: 13px; }
+.pattern-tip .pt-body { color: var(--text-dim); }
+.pattern-tip .pt-foot { margin-top: 6px; font-size: 11px; color: var(--text-faint); }
+.pattern-tip .pt-sample-wrap { margin: 6px 0; display: flex; justify-content: center; }
+.pattern-tip .pt-sample { display: block; background: rgba(0, 0, 0, 0.18); border-radius: 4px; }
+
 .dir-up { color: var(--up); }
 .dir-down { color: var(--down); }
 .dir-neutral { color: var(--text-dim); }

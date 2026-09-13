@@ -36,7 +36,8 @@ from .selftest import run_selftest
 from .sync import get_sync_status, sync_incremental
 from .history import list_history, load_history, delete_history
 from .market_events import (
-    get_limit_board, get_lan_board, get_ladder,
+    get_limit_board, get_lan_board, get_ladder, get_limit_picture,
+    get_action_analysis,
     get_dragon_tiger, get_dragon_tiger_seats, latest_trade_date,
     get_hotspots, get_news,
     get_dt_ladder, get_daily_news, get_dragon_tiger_history,
@@ -84,6 +85,7 @@ def meta():
             "direction": p.direction,
             "candles": p.candles,
             "desc": p.desc,
+            "sample": p.sample,        # 示例 K 线（tooltip 示意图），[{o,h,l,c}, ...]
             "params": p.params,        # 参数化形态的参数定义（如 {"N": {...}}），None 表示无参数
             "no_verify": p.no_verify,  # True 表示不提供「验证」子选项
         })
@@ -164,7 +166,15 @@ def board(kind):
         return jsonify(get_limit_board("down", date))
     if kind == "lan":
         return jsonify(get_lan_board(date))
+    if kind == "picture":
+        return jsonify(get_limit_picture(date))
     return jsonify({"error": "未知板块类型"}), 400
+
+
+@app.route("/api/action-analysis")
+def action_analysis():
+    date = request.args.get("date") or None
+    return jsonify(get_action_analysis(date))
 
 
 @app.route("/api/ladder")
