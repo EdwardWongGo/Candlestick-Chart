@@ -272,6 +272,9 @@ function renderPatterns() {
           <span class="pname">${p.name_zh} <span class="pdir" style="color:${C_DIM}">${p.name_en}</span></span>
         </label>
         ${paramCtrl}`;
+      // 勾选状态变化 → 同步该项的验证子选项（一对一联动）
+      const mainCb = item.querySelector('.pat-main input[data-key]');
+      if (mainCb) mainCb.addEventListener('change', () => syncVerifyForItem(item));
       // 悬停显示形态解释半透明框
       item.addEventListener('mouseenter', (e) => showPatternTip(p, e));
       item.addEventListener('mousemove', (e) => movePatternTip(e));
@@ -284,10 +287,47 @@ function renderPatterns() {
   box.querySelectorAll('.group-toggle').forEach((t) => {
     t.addEventListener('click', () => toggleGroup(t.dataset.group));
   });
+  // 初始化：形态默认全部未勾选 → 其验证子选项一律置灰
+  syncAllVerify();
   // 看涨/看跌形态单选互斥
   setupPatternDirToggle();
   // 若已处于「历史结果锁定形态」状态（重渲染后），立即恢复锁定
   if (state.lockedPatterns && state.lockedPatterns.size) applyPatternLock();
+}
+
+// ---------------------------------------------------------------------------
+// 形态 ↔ 验证 一对一联动
+// 每个形态项最多拥有一个「验证」子选项（.verify-on），两者严格按 data-key 配对。
+// 规则：
+//   1. 形态未勾选 → 验证立即清空选中并置灰（disabled），不可勾选
+//   2. 形态已勾选 → 验证解除置灰，变为可勾选
+//   3. 取消勾选形态 → 验证清空并重新置灰；再次勾选形态时，验证保持未选中
+//      （不记忆上次选择，验证状态始终由当前勾选操作决定，避免"幽灵选中"）
+//   4. 任一形态的操作只影响自身验证项，不波及其他形态
+//   5. 历史锁定项（形态被强制勾选且 disabled）由 applyPatternLock 单独控制，此处跳过
+// ---------------------------------------------------------------------------
+const VERIFY_TIP_ON = '勾选后追加 1 天验证日，仅保留通过验证的形态';
+const VERIFY_TIP_OFF = '请先勾选该形态，才能启用验证';
+
+function syncVerifyForItem(item) {
+  const main = item.querySelector('.pat-main input[data-key]');
+  const verify = item.querySelector('.verify-on[data-key]');
+  if (!main || !verify) return;          // 无验证子选项（参数化 / no_verify 形态）
+  if (main.disabled) return;             // 历史锁定项：保留 applyPatternLock 设置的状态
+  const label = item.querySelector('.pat-verify');
+  if (main.checked) {
+    verify.disabled = false;
+    if (label) { label.classList.remove('is-disabled'); label.title = VERIFY_TIP_ON; }
+  } else {
+    verify.checked = false;              // 取消勾选形态 → 立即清空验证
+    verify.disabled = true;
+    if (label) { label.classList.add('is-disabled'); label.title = VERIFY_TIP_OFF; }
+  }
+}
+
+// 全量同步：初始化、批量操作、方向互斥、锁定/解锁后统一刷新，保证状态始终一致
+function syncAllVerify() {
+  document.querySelectorAll('#patternList .pattern-item').forEach(syncVerifyForItem);
 }
 
 function dirZh(d) { return d === 'bullish' ? '看涨' : (d === 'bearish' ? '看跌' : '中性'); }
@@ -406,6 +446,8 @@ function applyPatternLock() {
       }
     }
   });
+  // 非锁定项按当前勾选状态刷新验证项（锁定项因 main.disabled 被 syncVerifyForItem 跳过）
+  syncAllVerify();
   if (_updateDirectionExclusion) _updateDirectionExclusion();
 }
 
@@ -418,6 +460,8 @@ function unlockPatterns() {
     item.classList.remove('locked');
     item.querySelectorAll('input').forEach((inp) => { inp.disabled = false; });
   });
+  // 解锁后按当前形态勾选状态恢复各验证项的可用性（未勾选的仍保持置灰）
+  syncAllVerify();
   if (_updateDirectionExclusion) _updateDirectionExclusion();
 }
 
@@ -448,6 +492,8 @@ function setupPatternDirToggle() {
     // 清空隐藏组的勾选（锁定项除外，避免丢失锁定选择）
     if (!showBear) bearGroup && bearGroup.querySelectorAll('.pat-main input').forEach((cb) => { if (!cb.disabled) cb.checked = false; });
     if (!showBull) bullGroup && bullGroup.querySelectorAll('.pat-main input').forEach((cb) => { if (!cb.disabled) cb.checked = false; });
+    // 隐藏组被清空勾选 → 其验证子选项同步清空并置灰
+    syncAllVerify();
   };
   _updateDirectionExclusion = update;
   document.querySelectorAll('input[name="patternDir"]').forEach((r) => r.addEventListener('change', update));
@@ -457,6 +503,7 @@ function setupPatternDirToggle() {
 function setAllPatterns(checked) {
   // 单选模式下只操作「当前显示方向组」的形态（隐藏组不参与）；锁定（disabled）项跳过，保持不可修改
   document.querySelectorAll('#patternList .pattern-group:not(.hidden-group) .pat-main input[type=checkbox]').forEach((cb) => { if (!cb.disabled) cb.checked = checked; });
+  syncAllVerify();   // 批量勾选/清空后统一刷新验证项
 }
 
 function toggleGroup(direction) {
@@ -466,6 +513,7 @@ function toggleGroup(direction) {
   if (!cbs.length) return;
   const allChecked = cbs.every((cb) => cb.checked);
   cbs.forEach((cb) => { cb.checked = !allChecked; });   // 全选→清空，否则→全选
+  syncAllVerify();   // 分组批量切换后统一刷新验证项
 }
 
 // ===================== 文件导入 =====================
@@ -595,7 +643,16 @@ function collectParams() {
   const timeframes = [...document.querySelectorAll('#timeframeChips .chip.active')].map((c) => c.dataset.key);
   const markets = [...document.querySelectorAll('#marketChips .chip.active')].map((c) => c.dataset.key);
   const patterns = [...document.querySelectorAll('#patternList .pat-main input:checked')].map((cb) => cb.dataset.key);
-  const verifyPatterns = [...document.querySelectorAll('#patternList .verify-on:checked')].map((cb) => cb.dataset.key);
+  // 验证项需同时满足：未被置灰（或属历史锁定项）+ 所属形态处于勾选状态
+  const verifyPatterns = [...document.querySelectorAll('#patternList .verify-on:checked')]
+    .filter((cb) => {
+      const item = cb.closest('.pattern-item');
+      if (item && item.classList.contains('locked')) return true;  // 历史锁定项：沿用其记录的验证值
+      if (cb.disabled) return false;                               // 置灰项一律不提交
+      const main = document.querySelector(`#patternList .pat-main input[data-key="${cb.dataset.key}"]`);
+      return !!main && main.checked;
+    })
+    .map((cb) => cb.dataset.key);
 
   const num = (id) => { const v = document.getElementById(id).value; return v === '' ? null : parseFloat(v); };
 
