@@ -1,0 +1,11 @@
+# 注意：git 属性后出现的规则覆盖先出现的，特定规则必须写在通用规则之后
+
+# 其余文本文件由 git 自动归一化（仓库内存 LF，检出时按平台转换）
+* text=auto
+
+# Windows 批处理必须以 CRLF 换行存储
+# cmd.exe 解析纯 LF 的 .bat 会「窗口一闪而过」
+# 用 -text 让 git 完全不做换行符转换：clone 与 GitHub zip 下载都拿到 CRLF
+# （text eol=crlf 只对 clone 生效，GitHub 生成的 zip 不应用 eol 转换）
+*.bat -text
+*.cmd -text

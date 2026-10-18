@@ -426,6 +426,9 @@ body {
 }
 .pattern-item .pat-verify:hover { color: var(--accent); border-color: var(--accent); }
 .pattern-item .pat-verify:has(input:checked) { color: var(--accent); }
+/* 所属形态未勾选 → 验证项置灰、禁勾选 */
+.pattern-item .pat-verify.is-disabled { opacity: .45; cursor: not-allowed; color: var(--text-faint); }
+.pattern-item .pat-verify.is-disabled:hover { color: var(--text-faint); border-color: transparent; }
 .pattern-item .pat-param {
   display: flex; align-items: center; gap: 4px; flex-shrink: 0;
   font-size: 11px; color: var(--text-dim);
