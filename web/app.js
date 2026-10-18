@@ -277,9 +277,11 @@ function renderPatterns() {
       // 参数化形态：N 输入框；无验证子选项（no_verify）：不显示任何子选项；其余：验证勾选
       let paramCtrl = '';
       if (p.params && p.params.N) {
-        paramCtrl = `<label class="pat-param" title="大阳线后连续 N 根不破，N 取值 ${p.params.N.min}-${p.params.N.max}">
-            <span class="plabel">N</span>
-            <input type="number" class="pat-n" data-key="${p.key}" min="${p.params.N.min}" max="${p.params.N.max}" step="1" value="${p.params.N.default}">
+        const spec = p.params.N;
+        const label = spec.label || 'N';
+        paramCtrl = `<label class="pat-param" title="${label}，取值 ${spec.min}-${spec.max}">
+            <span class="plabel">${label}</span>
+            <input type="number" class="pat-n" data-key="${p.key}" min="${spec.min}" max="${spec.max}" step="1" value="${spec.default}">
           </label>`;
       } else if (!p.no_verify) {
         paramCtrl = `<label class="pat-verify" title="勾选后追加 1 天验证日，仅保留通过验证的形态">
@@ -379,11 +381,15 @@ function showPatternTip(p, e) {
   const dir = dirZh(p.direction);
   const dirColor = p.direction === 'bullish' ? C_UP : (p.direction === 'bearish' ? C_DOWN : C_ACCENT);
   const sampleSvg = renderPatternSampleSvg(p.sample);
+  // 参数化形态（如十字星数量）显示可配置范围，其余显示固定根数
+  const candleText = (p.params && p.params.N)
+    ? `${p.params.N.min}-${p.params.N.max} 根（可配置）`
+    : `${p.candles} 根`;
   tip.innerHTML = `
     <div class="pt-head"><b>${p.name_zh}</b><span style="color:${C_DIM}">${p.name_en}</span><span style="color:${dirColor}">${dir}</span></div>
     ${sampleSvg ? `<div class="pt-sample-wrap">${sampleSvg}</div>` : ''}
     <div class="pt-body">${p.desc || ''}</div>
-    <div class="pt-foot">${p.candles} 根 K 线形态</div>`;
+    <div class="pt-foot">${candleText} K 线形态</div>`;
   tip.classList.add('show');
   _positionPatternTip(e);
 }
@@ -643,17 +649,18 @@ function clearImport() {
 
 // ===================== 收集参数 =====================
 function collectPatternParams() {
-  // 收集参数化形态（如单阳不破）的 N 参数，未勾选形态或非法值不纳入
+  // 收集参数化形态（如十字星数量）的 N 参数，未勾选形态或非法值不纳入
   const out = {};
   document.querySelectorAll('#patternList .pat-n[data-key]').forEach((inp) => {
     const key = inp.dataset.key;
     const mainCb = document.querySelector(`#patternList .pat-main input[data-key="${key}"]`);
     if (mainCb && !mainCb.checked) return;   // 未勾选该形态则跳过
     let v = parseInt(inp.value, 10);
-    const lo = parseInt(inp.min, 10) || 2;
-    const hi = parseInt(inp.max, 10) || 7;
-    if (isNaN(v)) v = 3;
-    v = Math.max(lo, Math.min(hi, v));       // clamp 到 2-7
+    const lo = parseInt(inp.min, 10);
+    const hi = parseInt(inp.max, 10);
+    if (isNaN(v)) v = isNaN(lo) ? 1 : lo;    // 输入为空时回落到下界（默认值）
+    if (!isNaN(lo)) v = Math.max(lo, v);
+    if (!isNaN(hi)) v = Math.min(hi, v);
     out[key] = { N: v };
   });
   return Object.keys(out).length ? out : null;

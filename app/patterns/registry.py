@@ -104,19 +104,26 @@ def _shooting_star(candles: List[Candle], i: int) -> Optional[float]:
     return None
 
 
-def _doji(candles: List[Candle], i: int) -> Optional[float]:
-    """十字星（趋势反转方向）：实体极小，多空平衡，方向取决于前期趋势。"""
-    k = candles[i]
-    if k.total_range == 0:
+def _doji(candles: List[Candle], i: int, n: int = 1) -> Optional[float]:
+    """十字星（趋势反转方向）：最近 n 根连续为十字星（实体 <= 振幅 10%），方向取决于前期趋势。
+
+    n 可配置 1-6（默认 1）：连续十字星根数越多，多空僵持越久，信号越强。
+    """
+    if n < 1 or i < n - 1:
         return None
-    if k.body > 0.1 * k.total_range:
-        return None
-    trend = base.prior_trend(candles, i)
-    # 下跌后十字星→看涨，上涨后→看跌，无趋势→中性（强度低）
+    # 最近 n 根都必须是十字星
+    for j in range(i - n + 1, i + 1):
+        k = candles[j]
+        if k.total_range == 0 or k.body > 0.1 * k.total_range:
+            return None
+    # 趋势取「连续十字星之前」的窗口
+    trend = base.prior_trend(candles, i - n + 1)
     if trend == "down":
-        return _score(50, candles, i, _trend_bonus("down"))
+        base_score = 50 + (n - 1) * 4.8   # 1 根 50 → 6 根 74
+        return _score(min(80.0, base_score), candles, i, _trend_bonus("down"))
     if trend == "up":
-        return _score(50, candles, i, _trend_bonus("up"))
+        base_score = 50 + (n - 1) * 4.8
+        return _score(min(80.0, base_score), candles, i, _trend_bonus("up"))
     return None
 
 
@@ -429,8 +436,10 @@ PATTERNS: List[PatternDef] = [
                "上涨趋势中出现：上影线至少为实体的两倍，小实体位于价格区间下端。冲高回落、上方抛压沉重，是顶部反转信号。",
                [{"o": 10, "h": 11.5, "l": 9.9, "c": 9.95}]),
     PatternDef("doji", "十字星", "Doji", "neutral", 1, _doji,
-               "开盘价与收盘价几乎相等、实体极小。多空力量暂时均衡、趋势可能生变，方向取决于所处趋势位置。",
-               [{"o": 10, "h": 10.4, "l": 9.6, "c": 10.0}]),
+               "开盘价与收盘价几乎相等、实体极小。多空力量暂时均衡、趋势可能生变，方向取决于所处趋势位置。可指定「十字星数量」（1-6 根），连续根数越多僵持越充分、信号越强。",
+               [{"o": 10, "h": 10.4, "l": 9.6, "c": 10.0}, {"o": 10.0, "h": 10.35, "l": 9.7, "c": 10.02}, {"o": 10.02, "h": 10.3, "l": 9.75, "c": 10.0}],
+               params={"N": {"min": 1, "max": 6, "default": 1, "label": "十字星数量"}},
+               no_verify=True),
     PatternDef("dragonfly_doji", "蜻蜓十字", "Dragonfly Doji", "bullish", 1, _dragonfly_doji,
                "T 字线：开盘收盘均位于最高价附近，下影线很长、几乎无上影线。下跌趋势中探底回升、买盘强劲，看涨。",
                [{"o": 10, "h": 10.05, "l": 9.2, "c": 10.0}]),
@@ -563,9 +572,10 @@ def detect_patterns(candles: List[Candle], keys: Optional[List[str]] = None,
             continue
 
         direction = pd.direction
-        # 十字星方向依趋势而定
+        # 十字星方向依趋势而定（趋势取连续十字星之前的窗口，与 matcher 保持一致）
         if pd.key == "doji":
-            trend = base.prior_trend(candles, i)
+            trend_i = i - (N - 1) if N is not None else i
+            trend = base.prior_trend(candles, trend_i)
             if trend == "down":
                 direction = "bullish"
             elif trend == "up":
@@ -578,9 +588,9 @@ def detect_patterns(candles: List[Candle], keys: Optional[List[str]] = None,
             continue
 
         k = candles[i]
-        # 参数化形态（单阳不破族）：高亮覆盖大阳线 + 后续 N 根；其余按 candles 字段
+        # 参数化形态：高亮覆盖「最近 N 根」（如连续 N 根十字星）；其余按 candles 字段
         if N is not None:
-            idxs = list(range(i - N, i + 1))
+            idxs = list(range(i - N + 1, i + 1))
         else:
             idxs = list(range(i - pd.candles + 1, i + 1))
         if need_verify:
