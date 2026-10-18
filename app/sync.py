@@ -25,7 +25,7 @@ from typing import Callable, List, Optional
 
 import config
 from .data.source import get_source
-from .data.cache import KlineCache
+from .data.cache import KlineCache, dedupe_candles
 
 # 项目根目录（sync.py 位于 app/ 下，上溯一级）
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -111,7 +111,9 @@ def sync_incremental(codes: List[str], timeframes: List[str],
                 latest = source.get_bars(code, tf, SYNC_LOOKBACK)
                 new_bars = [b for b in latest if b.dt > last_dt]
                 if new_bars:
-                    merged = cached + new_bars
+                    # 周线/月线：同一周期只保留最新一根（未完成周期的 dt 会随拉取日变化，
+                    # 直接追加会把同一周/月写成多根，导致 K 线图与形态识别错乱）
+                    merged = dedupe_candles(cached + new_bars, tf)
                     cache.set(code, tf, merged[-config.MIN_BARS.get(tf, 120):])
                     return "synced"
             else:

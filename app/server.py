@@ -28,7 +28,7 @@ from flask import Flask, jsonify, request, send_file, send_from_directory
 import config
 from .patterns import all_patterns
 from .indicators import compute_ma
-from .data.source import get_source, get_quote_source
+from .data.source import get_source, get_quote_source, get_minute_data
 from .data.cache import KlineCache
 from .data.universe import parse_codes
 from .jobs import JobManager
@@ -508,6 +508,11 @@ def history_item(hid):
 @app.route("/api/kline/<code>")
 def kline(code):
     tf = request.args.get("tf", "daily")
+
+    # 日内分时：走腾讯分时接口（独立结构，非蜡烛图）
+    if tf == "minute":
+        return _kline_minute(code)
+
     if tf not in config.TIMEFRAMES:
         return jsonify({"error": "未知级别"}), 400
 
@@ -545,13 +550,41 @@ def kline(code):
             "ma120": _round(ma120[i]), "ma250": _round(ma250[i]),
         })
 
+    # 行情快照（中文 13 项字段：开/收/高/低/市值/流通值/动态市盈/换手/内盘/外盘/振幅/均价/成交额）
+    quote = {}
+    try:
+        quote = get_quote_source().get_quote(code)
+    except Exception:
+        quote = {}
+
     matches = []   # 已移除「命中形态」检测：部分股票形态检测异常会导致 K 线接口失败
     return jsonify({
         "code": code,
         "timeframe": tf,
         "timeframe_zh": config.TIMEFRAMES[tf]["zh"],
+        "name": quote.get("name", ""),
+        "quote": quote,
         "candles": candles,
         "matches": matches,
+    })
+
+
+def _kline_minute(code):
+    """日内分时数据（1 分钟） + 行情快照。"""
+    quote = {}
+    try:
+        quote = get_quote_source().get_quote(code)
+    except Exception:
+        quote = {}
+    md = get_minute_data(code)
+    return jsonify({
+        "code": code,
+        "timeframe": "minute",
+        "timeframe_zh": "分时",
+        "name": quote.get("name", ""),
+        "quote": quote,
+        "minutes": md.get("minutes", []),
+        "error": md.get("error"),
     })
 
 

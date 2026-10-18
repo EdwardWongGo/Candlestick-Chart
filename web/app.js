@@ -84,6 +84,8 @@ const state = {
   page: 1,
   pageSize: 15,   // 结果分页默认每页条数（15/30/50/100/200 可调）
   klineChart: null,
+  klineCode: null,       // 当前 K 线弹窗查看的股票代码
+  klineTf: 'daily',      // 当前 K 线弹窗级别（minute/daily/weekly/monthly）
   eventTab: null,        // 当前市场事件模块
   eventData: null,       // 当前模块数据
 };
@@ -185,6 +187,13 @@ function bindEvents() {
   // 弹窗
   document.getElementById('closeModal').addEventListener('click', closeModal);
   document.getElementById('modalBackdrop').addEventListener('click', closeModal);
+  // K 线级别切换（分时 / 日线 / 周线 / 月线）
+  document.querySelectorAll('#klineTfSwitch .tf-btn').forEach((b) => {
+    b.addEventListener('click', () => {
+      if (!state.klineCode) return;
+      openKline(state.klineCode, b.dataset.tf);
+    });
+  });
   document.getElementById('closeSelftest').addEventListener('click', closeSelftest);
   document.getElementById('selftestBackdrop').addEventListener('click', closeSelftest);
   document.getElementById('closeSeat').addEventListener('click', closeSeat);
@@ -243,6 +252,17 @@ function renderPatterns() {
   ];
   groups.forEach((g) => {
     const patterns = state.meta.patterns.filter((p) => p.direction === g.key);
+    // 看涨形态：把「看涨吞没」「启明星」置顶，方便日常选择（其余保持原顺序）
+    if (g.key === 'bullish') {
+      const pin = ['bullish_engulfing', 'morning_star'];
+      patterns.sort((a, b) => {
+        const ia = pin.indexOf(a.key), ib = pin.indexOf(b.key);
+        if (ia === -1 && ib === -1) return 0;
+        if (ia === -1) return 1;
+        if (ib === -1) return -1;
+        return ia - ib;
+      });
+    }
     if (!patterns.length) return;
     const gwrap = document.createElement('div');
     gwrap.className = 'pattern-group';
@@ -456,7 +476,16 @@ function setupPatternDirToggle() {
 
 function setAllPatterns(checked) {
   // 单选模式下只操作「当前显示方向组」的形态（隐藏组不参与）；锁定（disabled）项跳过，保持不可修改
-  document.querySelectorAll('#patternList .pattern-group:not(.hidden-group) .pat-main input[type=checkbox]').forEach((cb) => { if (!cb.disabled) cb.checked = checked; });
+  const groups = document.querySelectorAll('#patternList .pattern-group:not(.hidden-group)');
+  groups.forEach((g) => {
+    g.querySelectorAll('.pat-main input[type=checkbox]').forEach((cb) => { if (!cb.disabled) cb.checked = checked; });
+  });
+  // 清空形态时同步清空「验证」子选项（全选不默认勾选验证）
+  if (!checked) {
+    groups.forEach((g) => {
+      g.querySelectorAll('.verify-on').forEach((v) => { if (!v.disabled) v.checked = false; });
+    });
+  }
 }
 
 function toggleGroup(direction) {
@@ -466,6 +495,10 @@ function toggleGroup(direction) {
   if (!cbs.length) return;
   const allChecked = cbs.every((cb) => cb.checked);
   cbs.forEach((cb) => { cb.checked = !allChecked; });   // 全选→清空，否则→全选
+  // 本次是「清空」时，同步清空该组的验证子选项
+  if (allChecked) {
+    gw.querySelectorAll('.verify-on').forEach((v) => { if (!v.disabled) v.checked = false; });
+  }
 }
 
 // ===================== 文件导入 =====================
@@ -2544,17 +2577,29 @@ function generateReport() {
 }
 
 // ===================== K线详情 =====================
+const KLINE_TF_ZH = { minute: '分时', daily: '日线', weekly: '周线', monthly: '月线' };
+
 async function openKline(code, tf) {
   const modal = document.getElementById('klineModal');
   modal.classList.remove('hidden');
-  document.getElementById('modalTitle').textContent = `${code} · ${state.meta.timeframes.find(t => t.key === tf)?.zh || tf} 蜡烛图`;
+  state.klineCode = code;
+  state.klineTf = tf || 'daily';
+  document.querySelectorAll('#klineTfSwitch .tf-btn').forEach((b) => {
+    b.classList.toggle('active', b.dataset.tf === state.klineTf);
+  });
+  const tfZh = KLINE_TF_ZH[state.klineTf] || state.klineTf;
+  document.getElementById('modalTitle').textContent = `${code} · ${tfZh}`;
   document.getElementById('modalLegend').innerHTML = '';
+  document.getElementById('klineQuote').innerHTML = '';
+  // 切换级别前销毁旧图表实例，避免 setOption 合并残留上一级别的 series
+  if (state.klineChart) { state.klineChart.dispose(); state.klineChart = null; }
   document.getElementById('klineChart').innerHTML = '';
 
   try {
-    const r = await fetch(API.kline(code, tf));
+    const r = await fetch(API.kline(code, state.klineTf));
     const data = await r.json();
     if (data.error) { alert(data.error); closeModal(); return; }
+    if (data.name) document.getElementById('modalTitle').textContent = `${data.name} ${code} · ${tfZh}`;
     renderKline(data);
   } catch (e) {
     console.error(e);
@@ -2564,9 +2609,99 @@ async function openKline(code, tf) {
 function closeModal() {
   document.getElementById('klineModal').classList.add('hidden');
   if (state.klineChart) { state.klineChart.dispose(); state.klineChart = null; }
+  state.klineCode = null;
 }
 
 function renderKline(data) {
+  renderQuotePanel(data.quote || {});
+  if (data.timeframe === 'minute') {
+    renderMinuteChart(data);
+  } else {
+    renderCandleChart(data);
+  }
+}
+
+// 行情面板：13 项中文字段（开/收/高/低/市值/流通值/动态市盈/换手/内盘/外盘/振幅/均价/成交额）
+function renderQuotePanel(q) {
+  const box = document.getElementById('klineQuote');
+  if (!box) return;
+  const up = (q.change_pct || 0) >= 0;
+  const color = up ? C_UP : C_DOWN;
+  const chg = (q.change_pct != null) ? `${up ? '+' : ''}${q.change_pct}%` : '';
+  const fmt = (v) => (v == null || v === '' || isNaN(v)) ? '—' : v;
+
+  const items = [
+    { k: '开盘价', v: q.open, u: '' },
+    { k: '收盘价', v: q.price, u: '' },
+    { k: '最高价', v: q.high, u: '' },
+    { k: '最低价', v: q.low, u: '' },
+    { k: '市值', v: q.market_cap, u: '亿' },
+    { k: '流通值', v: q.float_mcap, u: '亿' },
+    { k: '动态市盈', v: q.dynamic_pe, u: '' },
+    { k: '换手', v: q.turnover, u: '%' },
+    { k: '内盘', v: q.inner_disc, u: '手' },
+    { k: '外盘', v: q.outer_disc, u: '手' },
+    { k: '振幅', v: q.amplitude, u: '%' },
+    { k: '均价', v: q.avg_price, u: '' },
+    { k: '成交额', v: q.amount, u: '万' },
+  ];
+  const cells = items.map((it) =>
+    `<div class="kq-item"><span class="kq-k">${it.k}</span><span class="kq-v">${fmt(it.v)}<i class="kq-u">${it.u}</i></span></div>`
+  ).join('');
+
+  box.innerHTML = `
+    <div class="kq-head">
+      <span class="kq-price" style="color:${color}">${fmt(q.price)}</span>
+      <span class="kq-chg" style="color:${color}">${chg}</span>
+    </div>
+    <div class="kq-grid">${cells}</div>`;
+}
+
+// 日内分时图：价格线 + 均价线 + 分钟成交量
+function renderMinuteChart(data) {
+  const mins = data.minutes || [];
+  if (!mins.length) {
+    document.getElementById('klineChart').innerHTML = '<div class="kline-empty">暂无分时数据</div>';
+    return;
+  }
+  const times = mins.map((m) => m.t);
+  const prices = mins.map((m) => m.price);
+  const avgs = mins.map((m) => m.avg);
+  const vols = mins.map((m) => ({ value: m.volume, itemStyle: { color: C_DIM, opacity: 0.55 } }));
+
+  document.getElementById('modalLegend').innerHTML =
+    '<span style="color:var(--text-faint);font-size:12px">价格 / 均价 · 分钟成交量</span>';
+
+  const chart = echarts.init(document.getElementById('klineChart'), 'dark');
+  state.klineChart = chart;
+  const option = {
+    backgroundColor: 'transparent',
+    animation: false,
+    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' }, backgroundColor: '#1c2330', borderColor: '#2a3444', textStyle: { color: C_TEXT } },
+    grid: [
+      { left: 60, right: 20, top: 20, height: '62%' },
+      { left: 60, right: 20, top: '80%', height: '13%' },
+    ],
+    xAxis: [
+      { type: 'category', data: times, boundaryGap: false, axisLine: { lineStyle: { color: '#2a3444' } }, axisLabel: { color: C_DIM }, splitLine: { show: false } },
+      { type: 'category', gridIndex: 1, data: times, boundaryGap: false, axisLine: { lineStyle: { color: '#2a3444' } }, axisLabel: { show: false }, splitLine: { show: false } },
+    ],
+    yAxis: [
+      { scale: true, axisLabel: { color: C_DIM }, splitLine: { lineStyle: { color: 'rgba(42,52,68,.5)' } } },
+      { gridIndex: 1, scale: true, axisLabel: { show: false }, splitLine: { show: false } },
+    ],
+    dataZoom: [{ type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 }],
+    series: [
+      { name: '价格', type: 'line', data: prices, showSymbol: false, lineStyle: { width: 1.2, color: C_ACCENT }, areaStyle: { color: hexToRgba(C_ACCENT, 0.08) } },
+      { name: '均价', type: 'line', data: avgs, showSymbol: false, lineStyle: { width: 1, color: C_RESONANCE } },
+      { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: vols },
+    ],
+  };
+  chart.setOption(option);
+}
+
+// 日/周/月蜡烛图 + 均线 + 成交量
+function renderCandleChart(data) {
   const candles = data.candles;
   const dates = candles.map((c) => c.dt);
   const ohlc = candles.map((c) => [c.open, c.close, c.low, c.high]);

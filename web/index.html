@@ -325,10 +325,17 @@
     <div class="modal-panel">
       <div class="modal-head">
         <div class="modal-title" id="modalTitle">K线详情</div>
+        <div class="kline-tf-switch" id="klineTfSwitch">
+          <span class="tf-btn" data-tf="minute">分时</span>
+          <span class="tf-btn active" data-tf="daily">日线</span>
+          <span class="tf-btn" data-tf="weekly">周线</span>
+          <span class="tf-btn" data-tf="monthly">月线</span>
+        </div>
         <div class="modal-legend" id="modalLegend"></div>
         <button class="close-btn" id="closeModal">✕</button>
       </div>
-      <div class="modal-body">
+      <div class="modal-body kline-body">
+        <div class="kline-quote" id="klineQuote"></div>
         <div id="klineChart" class="kline-chart"></div>
       </div>
     </div>

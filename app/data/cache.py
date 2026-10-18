@@ -15,9 +15,39 @@ from __future__ import annotations
 import csv
 import os
 import time
+from datetime import datetime
 from typing import List, Optional
 
 from ..models import Candle
+
+
+def _period_key(dt: str, timeframe: str) -> str:
+    """把 K 线日期归一到所属周期（用于识别未完成周期的重复根）。"""
+    if timeframe == "monthly":
+        return dt[:7]   # YYYY-MM
+    if timeframe == "weekly":
+        try:
+            d = datetime.strptime(dt[:10], "%Y-%m-%d")
+            y, w, _ = d.isocalendar()
+            return f"{y}-W{w:02d}"
+        except (ValueError, TypeError):
+            return dt
+    return dt
+
+
+def dedupe_candles(candles: List[Candle], timeframe: str) -> List[Candle]:
+    """按周期去重：周线/月线同一周期只保留最后一根（最新未完成周期覆盖旧的）。
+
+    背景：mootdx 对「当前未完成」的周线/月线，其 dt 会随拉取日变化
+    （如 2026-09 的月线可能先后是 09-11 / 09-18 / 09-30）。增量同步若按
+    dt 直接追加，会把同一周期写成多根，导致 K 线图与形态识别错乱。
+    """
+    if timeframe not in ("weekly", "monthly") or not candles:
+        return candles
+    seen = {}
+    for c in candles:
+        seen[_period_key(c.dt, timeframe)] = c   # 后出现的（更新的）覆盖前面的
+    return sorted(seen.values(), key=lambda c: c.dt)
 
 
 class KlineCache:
@@ -62,12 +92,15 @@ class KlineCache:
                     ))
                 except (ValueError, IndexError):
                     continue
+        # 周线/月线按周期去重（防历史脏数据：同一周期被写成多根）
+        candles = dedupe_candles(candles, timeframe)
         return candles if candles else None
 
     def set(self, code: str, timeframe: str, candles: List[Candle]):
-        """写入缓存。"""
+        """写入缓存（周线/月线写入前按周期去重）。"""
         if not candles:
             return
+        candles = dedupe_candles(candles, timeframe)
         os.makedirs(os.path.dirname(self._path(code, timeframe)), exist_ok=True)
         with open(self._path(code, timeframe), "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)

@@ -160,7 +160,7 @@ class TencentQuoteSource(DataSource):
         if '"' not in data:
             return {}
         vals = data.split('"')[1].split("~")
-        if len(vals) < 50:
+        if len(vals) < 54:
             return {}
 
         def _f(x, default=0.0):
@@ -169,13 +169,27 @@ class TencentQuoteSource(DataSource):
             except (ValueError, TypeError):
                 return default
 
+        # 腾讯行情快照字段（~ 分隔，索引见下）：
+        #  1名称 3现价 4昨收 5今开 7外盘 8内盘 32涨跌% 33最高 34最低
+        #  36成交量(手) 37成交额(万) 38换手% 43振幅% 44流通市值(亿) 45总市值(亿) 51均价 52动态PE
         return {
             "name": vals[1],
-            "price": _f(vals[3]),
-            "last_close": _f(vals[4]),
-            "change_pct": _f(vals[32]),
-            "high": _f(vals[33]),
-            "low": _f(vals[34]),
+            "price": _f(vals[3]),          # 现价 / 收盘价
+            "last_close": _f(vals[4]),     # 昨收
+            "open": _f(vals[5]),           # 开盘价
+            "high": _f(vals[33]),          # 最高价
+            "low": _f(vals[34]),           # 最低价
+            "change_pct": _f(vals[32]),    # 涨跌幅 %
+            "volume": _f(vals[36]),        # 成交量（手）
+            "amount": _f(vals[37]),        # 成交额（万）
+            "turnover": _f(vals[38]),      # 换手率 %
+            "amplitude": _f(vals[43]),     # 振幅 %
+            "float_mcap": _f(vals[44]),    # 流通市值（亿）
+            "market_cap": _f(vals[45]),    # 总市值（亿）
+            "avg_price": _f(vals[51]),     # 均价
+            "dynamic_pe": _f(vals[52]),    # 动态市盈
+            "outer_disc": _f(vals[7]),     # 外盘（手）
+            "inner_disc": _f(vals[8]),     # 内盘（手）
         }
 
 
@@ -420,3 +434,50 @@ def get_mootdx_client():
 
 def get_quote_source() -> TencentQuoteSource:
     return TencentQuoteSource()
+
+
+def get_minute_data(code: str) -> dict:
+    """腾讯财经当日分时数据（1 分钟），返回 {"minutes": [...], "error": ...}。
+
+    腾讯分时接口返回条目格式：[HHMM, 价格, 累计成交量(手), 累计成交额(元)]，
+    其中成交量为当日累计、成交额为当日累计；逐分钟均价 = 累计成交额 / (累计成交量 * 100 股)。
+    """
+    import json
+    import urllib.request
+    symbol = _market_prefix(code) + str(code).zfill(6)
+    url = f"https://web.ifzq.gtimg.cn/appstock/app/minute/query?code={symbol}"
+    try:
+        req = urllib.request.Request(url)
+        req.add_header("User-Agent", "Mozilla/5.0")
+        resp = urllib.request.urlopen(req, timeout=10)
+        r = json.loads(resp.read().decode("utf-8", "ignore"))
+    except Exception:
+        return {"minutes": [], "error": "分时数据获取失败"}
+
+    d = (r.get("data") or {}).get(symbol) or {}
+    rows = d.get("data", {}).get("data", []) or []
+    minutes = []
+    prev_vol = 0.0
+    for row in rows:
+        # 腾讯分时每条是空格分隔字符串 "HHMM 价格 累计成交量(手) 累计成交额(元)"
+        if isinstance(row, str):
+            row = row.split()
+        if not isinstance(row, (list, tuple)) or len(row) < 3:
+            continue
+        try:
+            t = str(row[0])
+            price = float(row[1])
+            cum_vol = float(row[2])                    # 累计成交量（手）
+            cum_amt = float(row[3]) if len(row) > 3 else 0.0  # 累计成交额（元）
+        except (ValueError, IndexError, TypeError):
+            continue
+        avg = (cum_amt / (cum_vol * 100)) if cum_vol > 0 else price
+        per_vol = max(0.0, cum_vol - prev_vol)
+        prev_vol = cum_vol
+        minutes.append({
+            "t": (t[:2] + ":" + t[2:4]) if len(t) >= 4 else t,
+            "price": round(price, 2),
+            "avg": round(avg, 2),
+            "volume": per_vol,       # 该分钟成交量（手）
+        })
+    return {"minutes": minutes}
