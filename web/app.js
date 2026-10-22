@@ -69,6 +69,7 @@ const state = {
   eventCache: {},        // 事件数据缓存：{tab:sub:date -> data}（涨停/跌停/连板/题材）
   customCodes: [],       // 导入的自定义股票代码
   importNames: {},       // 导入代码的名称
+  historyPool: null,     // 选中历史结果后的二次筛选股票池（仅限该批股票，null=全市场）
   dataSource: 'local',   // 数据来源：local(本地) / server(服务器) / upload(上传文件)
   serverHistory: [],     // 服务器地址历史记录
   serverSyncing: false,  // 服务器同步中
@@ -697,10 +698,12 @@ function collectParams() {
     change_min: num('changeMin'),
     change_max: num('changeMax'),
     exclude_st: document.getElementById('excludeSt').checked,
-    // 参数化形态的运行时参数（如单阳不破的 N），未设置则为 null
+    // 参数化形态的运行时参数（如十字星数量），未设置则为 null
     pattern_params: collectPatternParams(),
-    // 仅「上传文件」来源才携带上传的股票池；本地/服务器来源必须基于完整数据从零筛选
-    custom_codes: (state.dataSource === 'upload' && state.customCodes.length) ? state.customCodes : null,
+    // 股票池优先级：历史结果池（二次筛选限定范围）> 上传文件池 > 全市场（null）
+    custom_codes: (state.historyPool && state.historyPool.length)
+      ? state.historyPool
+      : ((state.dataSource === 'upload' && state.customCodes.length) ? state.customCodes : null),
     sort_by: state.sortKey,
   };
   return params;
@@ -744,6 +747,8 @@ async function startScan(params) {
   setScanning(true);
   state.scanStartTime = Date.now();
   state.lastParams = p;   // 记录本次参数，供「重新加载」复用
+  // 记录本次扫描的输入股票池：二次筛选沿用同一范围（null=全市场）
+  state.historyPool = (Array.isArray(p.custom_codes) && p.custom_codes.length) ? p.custom_codes : null;
   // 扫描开始时清空结果区，避免上一份结果（含历史视图「返回」按钮）残留误导；
   // 扫描完成后由 finishScan → renderResults 重新渲染结果与分页
   state.results = [];
@@ -871,6 +876,7 @@ function clearResult() {
   state.results = [];
   state.scanStats = null;
   state.viewingHistory = null;
+  state.historyPool = null;    // 离开历史视图 → 二次筛选池清除，回到全市场
   state.page = 1;
   unlockPatterns();            // 离开历史视图，解除形态锁定、恢复方向单选
   setDataSourceVisible(true);  // 离开历史视图，恢复显示「数据来源」选择项
@@ -978,6 +984,7 @@ function onDataSourceChange() {
     state.scanStats = null;
     state.lastParams = null;
     state.viewingHistory = null;
+    state.historyPool = null;   // 切换数据来源 → 清除历史二次筛选池
     document.getElementById('stats').textContent = '尚未扫描';
     setTableColumns('full');
     const table = document.getElementById('resultTable');
@@ -1208,6 +1215,8 @@ async function loadHistoryItem(id) {
     state.scanStats = d.stats || null;
     state.lastParams = d.params || null;
     state.viewingHistory = { id, ts: d.ts };
+    // 选中历史结果 → 二次筛选的股票池限定为这批股票的代码（去重）
+    state.historyPool = [...new Set((d.results || []).map((r) => r.code).filter(Boolean))];
     state.page = 1;
     // 历史数据视图：隐藏「数据来源」选择项，避免误操作
     setDataSourceVisible(false);
@@ -1227,7 +1236,7 @@ async function loadHistoryItem(id) {
     // 统计栏提示当前查看的是历史结果
     const statsEl = document.getElementById('stats');
     if (statsEl) {
-      statsEl.innerHTML = `📜 已加载历史结果 <b>${d.ts || ''}</b> · 命中 <b>${state.results.length}</b> 条　<a href="#" id="backToEmpty" style="color:var(--accent)">返回</a>`;
+      statsEl.innerHTML = `📜 已加载历史结果 <b>${d.ts || ''}</b> · 命中 <b>${state.results.length}</b> 条 · 二次筛选仅限这 <b>${state.historyPool.length}</b> 只股票　<a href="#" id="backToEmpty" style="color:var(--accent)">返回</a>`;
       document.getElementById('backToEmpty').addEventListener('click', (e) => { e.preventDefault(); clearResult(); });
     }
     // 切回形态筛选页（若当前在其它 Tab）
