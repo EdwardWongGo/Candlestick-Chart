@@ -215,7 +215,8 @@ class Screener:
                     matches = detect_patterns(bars, keys=patterns,
                                               lookback=config.SCAN_LOOKBACK,
                                               verify_keys=verify_patterns,
-                                              pattern_params=params.get("pattern_params"))
+                                              pattern_params=params.get("pattern_params"),
+                                              code=code)
                 except Exception:
                     failed += 1
                     done += 1

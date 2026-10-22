@@ -383,6 +383,58 @@ def _single_yang_no_break(candles: List[Candle], i: int) -> Optional[float]:
     return None
 
 
+# ---------------------------------------------------------------------------
+# 阳上不破（单阳不破变种：无上影线大阳线 + 后续 N 根收盘价站稳其上）
+# ---------------------------------------------------------------------------
+def _limit_up_ratio(code: str) -> float:
+    """按板块判断涨停幅度：主板 10%、创业板/科创板 20%、北交所 30%。"""
+    import config
+    market = config.classify_market(str(code)) if code else "other"
+    if market in ("cyb", "kcb"):
+        return 0.20
+    if market == "bj":
+        return 0.30
+    return 0.10
+
+
+def _yang_up_no_break(candles: List[Candle], i: int, code: str = ""):
+    """阳上不破：无上影线大阳线后，3~8 根 K 线收盘价均站稳该阳线收盘价之上，
+    且不超过其 (1+涨停幅度) 倍。自动扫描 3~8 根窗口，取最近（最短）成立的窗口。
+
+    规则（设大阳线收盘价 = a，后续收盘价 = x）：
+    - 大阳线：阳线 + 无上影线（high == close）+ 当日涨幅 >= 5%；
+    - a <= x <= a * b，b = 1.1 / 1.2 / 1.3（按主板/创业板科创板/北交所自动判断）；
+    - 完成日 i 为大阳线后第 N 根，N 自动遍历 3~8。
+
+    返回 (强度, 高亮根数)；高亮根数 = 大阳线 + N 根整理。
+    """
+    b = 1.0 + _limit_up_ratio(code)
+    for n in (3, 4, 5, 6, 7, 8):
+        j = i - n                    # 大阳线位置
+        if j < 0:
+            continue
+        yang = candles[j]
+        # 1) 大阳线：阳线 + 无上影线（收盘价即最高价，留极小浮点容差）
+        if not yang.is_bullish or yang.body <= 0:
+            continue
+        eps = max(abs(yang.high) * 1e-6, 1e-9)
+        if yang.upper_shadow > eps:
+            continue
+        # 2) 当日涨幅 >= 5%（相对昨收）
+        prev_close = candles[j - 1].close if j - 1 >= 0 else None
+        if prev_close is None or prev_close <= 0:
+            continue
+        if (yang.close - prev_close) / prev_close < 0.05:
+            continue
+        # 3) 后续 N 根收盘价：a <= x <= a * b
+        a = yang.close
+        if all(a <= candles[k].close <= a * b for k in range(j + 1, i + 1)):
+            # 4) 强度：整理时间越短越强（3 根 84 → 8 根 64）
+            quality = 84.0 - (n - 3) * 4.0
+            return _score(quality, candles, i, _trend_bonus(base.prior_trend(candles, j))), n + 1
+    return None
+
+
 def _suspected_main_rise(candles: List[Candle], i: int) -> Optional[float]:
     """疑似主升：最近 3 根 K 线收盘价均未跌破各自的 MA5（5 周期均线）。
 
@@ -419,6 +471,8 @@ class PatternDef:
     sample: Optional[list] = None   # 示例 K 线（tooltip 示意图），[{o,h,l,c}, ...] 从左到右
     params: Optional[dict] = None   # 参数定义 {name: {min, max, default}}，None 表示无参数
     no_verify: bool = False         # 不提供「验证」子选项（如单阳不破）
+    needs_code: bool = False        # 判定需要股票代码（如阳上不破按板块判断涨停幅度）
+    highlight_extra: int = 0        # 参数化形态高亮时额外包含的根数（如阳上不破含大阳线）
 
 
 PATTERNS: List[PatternDef] = [
@@ -483,6 +537,12 @@ PATTERNS: List[PatternDef] = [
                "一根攻击性长阳（当日涨幅≥5%，最好涨停）后，6~8 根 K 线横向盘整，所有最低价均未跌破该阳线最低价。多方护盘有力，回踩不破，通常第 6 根进入启动期。",
                [{"o": 9.5, "h": 10.5, "l": 9.4, "c": 10.4}, {"o": 10.3, "h": 10.5, "l": 10.0, "c": 10.3}, {"o": 10.3, "h": 10.4, "l": 10.0, "c": 10.2}, {"o": 10.2, "h": 10.5, "l": 10.05, "c": 10.4}, {"o": 10.4, "h": 10.6, "l": 10.1, "c": 10.3}, {"o": 10.3, "h": 10.5, "l": 10.0, "c": 10.2}, {"o": 10.2, "h": 10.6, "l": 10.05, "c": 10.5}],
                no_verify=True),
+    # ---- 阳上不破（无上影线大阳线 + 3~8 根收盘价站稳其上，自动扫描窗口）----
+    PatternDef("yang_up_no_break", "阳上不破", "Yang Up No Break", "bullish", 4, _yang_up_no_break,
+               "无上影线大阳线（收盘价即最高价、涨幅≥5%）后，3~8 根 K 线收盘价始终站稳该阳线收盘价之上，且不超过其 1.1/1.2/1.3 倍（按主板/创业板科创板/北交所涨停幅度自动判断）。",
+               [{"o": 9.6, "h": 10.4, "l": 9.55, "c": 10.4}, {"o": 10.4, "h": 10.7, "l": 10.3, "c": 10.6}, {"o": 10.6, "h": 10.9, "l": 10.5, "c": 10.8}, {"o": 10.8, "h": 11.0, "l": 10.7, "c": 10.9}],
+               no_verify=True,
+               needs_code=True),
     PatternDef("suspected_main_rise", "疑似主升", "Suspected Main Rise", "bullish", 3, _suspected_main_rise,
                "最近 3 根 K 线收盘价均未跌破各自 MA5，沿 5 周期均线强势上行，呈主升浪特征。",
                [{"o": 9.8, "h": 10.3, "l": 9.7, "c": 10.2}, {"o": 10.2, "h": 10.6, "l": 10.1, "c": 10.5}, {"o": 10.5, "h": 10.9, "l": 10.4, "c": 10.8}],
@@ -520,7 +580,8 @@ def _verify(candles: List[Candle], i: int, direction: str) -> bool:
 def detect_patterns(candles: List[Candle], keys: Optional[List[str]] = None,
                     lookback: int = 5,
                     verify_keys: Optional[List[str]] = None,
-                    pattern_params: Optional[dict] = None) -> List[PatternMatch]:
+                    pattern_params: Optional[dict] = None,
+                    code: str = "") -> List[PatternMatch]:
     """对「最近连续交易日窗口」做形态判断。
 
     与全周期扫描不同，形态必须恰好完成于最近窗口内：
@@ -534,8 +595,9 @@ def detect_patterns(candles: List[Candle], keys: Optional[List[str]] = None,
     keys:    限定扫描的形态（None = 全部）
     verify_keys: 需要验证的形态 key 列表（勾选「验证」的形态）
     lookback: 兼容旧签名保留，不再用于往回扫描。
-    pattern_params: 参数化形态的运行时参数（当前无参数化形态，保留用于兼容）；
+    pattern_params: 参数化形态的运行时参数（如十字星数量、整理时间）；
                     未传或缺失时使用形态声明中的默认值，并 clamp 到声明范围。
+    code: 股票代码（部分形态需要，如阳上不破按板块判断涨停幅度）。
 
     返回命中的 PatternMatch 列表（每个形态最多 1 次命中）。
     """
@@ -555,8 +617,9 @@ def detect_patterns(candles: List[Candle], keys: Optional[List[str]] = None,
         i = n - 2 if need_verify else n - 1
         if i < pd.candles - 1:
             continue
-        # 参数化形态：解析并 clamp N（如单阳不破）
+        # 参数化形态：解析并 clamp N（如十字星数量）
         N = None
+        span = None
         if pd.params and "N" in pd.params:
             spec = pd.params["N"]
             raw = (pattern_params or {}).get(pd.key, {}).get("N", spec.get("default", 3))
@@ -565,9 +628,13 @@ def detect_patterns(candles: List[Candle], keys: Optional[List[str]] = None,
             except (TypeError, ValueError):
                 N = int(spec.get("default", 3))
             N = max(int(spec.get("min", 2)), min(int(spec.get("max", 7)), N))
-            strength = pd.matcher(candles, i, N)
+            # 需要股票代码的形态（如阳上不破按板块判断涨停幅度）
+            strength = pd.matcher(candles, i, N, code) if pd.needs_code else pd.matcher(candles, i, N)
         else:
-            strength = pd.matcher(candles, i)
+            strength = pd.matcher(candles, i, code) if pd.needs_code else pd.matcher(candles, i)
+        # 部分形态返回 (强度, 高亮根数) 元组（如阳上不破自动扫描 3~8 根窗口）
+        if isinstance(strength, tuple):
+            strength, span = strength
         if strength is None:
             continue
 
@@ -588,9 +655,11 @@ def detect_patterns(candles: List[Candle], keys: Optional[List[str]] = None,
             continue
 
         k = candles[i]
-        # 参数化形态：高亮覆盖「最近 N 根」（如连续 N 根十字星）；其余按 candles 字段
-        if N is not None:
-            idxs = list(range(i - N + 1, i + 1))
+        # 高亮范围：动态 span（如阳上不破）> 参数化 N 根 > 形态声明 candles 根
+        if span is not None:
+            idxs = list(range(i - span + 1, i + 1))
+        elif N is not None:
+            idxs = list(range(i - N - pd.highlight_extra + 1, i + 1))
         else:
             idxs = list(range(i - pd.candles + 1, i + 1))
         if need_verify:
