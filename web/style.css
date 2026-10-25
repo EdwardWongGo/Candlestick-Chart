@@ -672,7 +672,8 @@ body {
 .kline-chart { width: 100%; height: 100%; }
 
 /* ===== K线弹窗：行情面板 + 级别切换 ===== */
-.kline-body { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.kline-wrap { display: flex; gap: 10px; min-height: 0; }
+.kline-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
 .kline-quote { flex-shrink: 0; padding: 8px 12px; border-radius: 8px; background: var(--bg-card); border: 1px solid var(--border); }
 .kq-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
 .kq-price { font-size: 20px; font-weight: 700; }
@@ -683,6 +684,43 @@ body {
 .kq-v { color: var(--text); font-weight: 600; }
 .kq-u { color: var(--text-faint); font-style: normal; font-size: 11px; margin-left: 2px; }
 .kline-body .kline-chart { width: 100%; flex: 1; min-height: 0; }
+
+/* ===== K线弹窗：右侧筛选结果栏 ===== */
+.kline-sidebar {
+  width: 210px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0;
+  border-left: 1px solid var(--border); padding-left: 10px;
+}
+.kline-sidebar.hidden-side { display: none; }
+.ks-head { flex-shrink: 0; font-size: 12px; color: var(--text-dim); padding: 2px 4px 8px; }
+.ks-head b { color: var(--text); }
+.ks-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.ks-item {
+  display: flex; align-items: baseline; gap: 6px; padding: 6px 8px; border-radius: 6px;
+  cursor: pointer; font-size: 12px; border: 1px solid transparent;
+}
+.ks-item:hover { background: var(--bg-card); }
+.ks-item.active { background: var(--bg-card); border-color: var(--accent); }
+.ks-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ks-code { color: var(--text-faint); font-size: 11px; flex-shrink: 0; }
+.ks-chg { font-weight: 600; font-size: 11px; flex-shrink: 0; }
+
+/* ===== K线弹窗：上一只/下一只 + 全屏 ===== */
+.kline-nav { display: flex; gap: 2px; flex-shrink: 0; }
+.kline-nav-btn, .kline-full-btn {
+  background: none; border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text-dim); cursor: pointer; padding: 2px 8px; font-size: 14px; line-height: 1.4;
+}
+.kline-nav-btn:hover:not(:disabled), .kline-full-btn:hover { color: var(--text); border-color: var(--accent); }
+.kline-nav-btn:disabled { opacity: .35; cursor: not-allowed; }
+.kline-full-btn { flex-shrink: 0; }
+.modal-title { white-space: nowrap; }
+
+/* 全屏：面板占满视口 */
+#klineModal.kline-full .modal-panel {
+  top: 0; left: 0; transform: none; width: 100vw; height: 100vh;
+  border-radius: 0; border: none;
+}
+#klineModal.kline-full .kline-sidebar { width: 240px; }
 
 /* ===== 文件导入 ===== */
 .import-box { display: flex; gap: 8px; }

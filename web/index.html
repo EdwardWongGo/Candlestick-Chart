@@ -325,6 +325,10 @@
     <div class="modal-panel">
       <div class="modal-head">
         <div class="modal-title" id="modalTitle">K线详情</div>
+        <div class="kline-nav">
+          <button class="kline-nav-btn" id="klinePrev" title="上一只（←）">‹</button>
+          <button class="kline-nav-btn" id="klineNext" title="下一只（→）">›</button>
+        </div>
         <div class="kline-tf-switch" id="klineTfSwitch">
           <span class="tf-btn" data-tf="minute">分时</span>
           <span class="tf-btn active" data-tf="daily">日线</span>
@@ -332,11 +336,15 @@
           <span class="tf-btn" data-tf="monthly">月线</span>
         </div>
         <div class="modal-legend" id="modalLegend"></div>
+        <button class="kline-full-btn" id="klineFullBtn" title="全屏（F）">⛶</button>
         <button class="close-btn" id="closeModal">✕</button>
       </div>
-      <div class="modal-body kline-body">
-        <div class="kline-quote" id="klineQuote"></div>
-        <div id="klineChart" class="kline-chart"></div>
+      <div class="modal-body kline-wrap">
+        <div class="kline-body">
+          <div class="kline-quote" id="klineQuote"></div>
+          <div id="klineChart" class="kline-chart"></div>
+        </div>
+        <aside class="kline-sidebar" id="klineSidebar"></aside>
       </div>
     </div>
   </div>

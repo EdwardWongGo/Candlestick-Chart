@@ -14,11 +14,14 @@ Author: HZQ
 """
 from __future__ import annotations
 
+import os
 import threading
 import time
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 from ..models import Candle
+from .cache import KlineCache, _period_key
 import config
 
 
@@ -358,6 +361,174 @@ class SinaKlineSource(DataSource):
 
 
 # ---------------------------------------------------------------------------
+# 全量历史 K 线（日线全量 + 周/月聚合；独立缓存，不影响筛选缓存性能）
+# ---------------------------------------------------------------------------
+_FULL_CACHE = KlineCache("data/full")
+_FULL_PAGE = 800          # 腾讯接口单次最多 800 根日线
+_FULL_MAX_PAGES = 40      # 最多拉 32000 根，覆盖 A 股全部历史
+_FQ_DIR = os.path.join("data", "full", "daily")   # 复权方式标记（{code}.fq）
+_FULL_BLOCK_UNTIL = 0     # 腾讯全量接口失败后的冷却截止（避免 WAF 拦截时持续请求）
+
+
+def get_full_fq(code: str) -> str:
+    """读取全量 K 线的复权方式（qfq/hfq），默认 qfq。"""
+    try:
+        with open(os.path.join(_FQ_DIR, f"{str(code).zfill(6)}.fq"), "r", encoding="utf-8") as f:
+            v = f.read().strip()
+            return v if v in ("qfq", "hfq") else "qfq"
+    except Exception:
+        return "qfq"
+
+
+def _write_fq(code: str, fq: str):
+    try:
+        os.makedirs(_FQ_DIR, exist_ok=True)
+        with open(os.path.join(_FQ_DIR, f"{str(code).zfill(6)}.fq"), "w", encoding="utf-8") as f:
+            f.write(fq)
+    except Exception:
+        pass
+
+
+def _tencent_symbol(code: str) -> str:
+    c = str(code).zfill(6)
+    if c.startswith(("6", "9")):
+        return "sh" + c
+    if c.startswith(("4", "8")):
+        return "bj" + c
+    return "sz" + c
+
+
+def _fetch_tencent_daily(code: str, end: Optional[str] = None,
+                        count: int = _FULL_PAGE, fq: str = "qfq") -> List[Candle]:
+    """腾讯日线：拉取 end 之前（含）最近 count 根，升序返回。
+
+    fq: "qfq" 前复权 / "hfq" 后复权 / "" 不复权。
+    """
+    import requests
+    symbol = _tencent_symbol(code)
+    param = f"{symbol},day,,{end or ''},{count},{fq}"
+    day_key = (fq + "day") if fq else "day"
+    for host, path in TencentKlineSource._HOSTS:
+        try:
+            r = requests.get(
+                f"https://{host}{path}",
+                params={"param": param},
+                headers={"User-Agent": TencentKlineSource._UA,
+                         "Referer": "https://gu.qq.com/"},
+                timeout=15,
+            )
+            if r.status_code != 200:
+                continue   # 403/501（WAF 拦截）等，换域名
+            data = (r.json().get("data") or {}).get(symbol) or {}
+            klines = data.get(day_key) or data.get("day") or []
+        except Exception:
+            continue
+        candles: List[Candle] = []
+        for row in klines:
+            if not isinstance(row, (list, tuple)) or len(row) < 6:
+                continue
+            try:
+                candles.append(Candle(
+                    dt=str(row[0])[:10],
+                    open=float(row[1]), close=float(row[2]),
+                    high=float(row[3]), low=float(row[4]),
+                    volume=float(row[5]),
+                ))
+            except (ValueError, IndexError, TypeError):
+                continue
+        if candles:
+            candles.sort(key=lambda c: c.dt)
+            return candles
+    return []
+
+
+def _fetch_full_daily(code: str, fq: str = "qfq",
+                      max_pages: int = _FULL_MAX_PAGES) -> List[Candle]:
+    """从最近往前按日期区间分段拉取，直到上市首日或达到页数上限。"""
+    global _FULL_BLOCK_UNTIL
+    if time.time() < _FULL_BLOCK_UNTIL:
+        return []   # 冷却中（数据源刚失败），直接让上层回退缓存
+    by_dt = {}
+    end = None
+    for _ in range(max_pages):
+        batch = _fetch_tencent_daily(code, end=end, fq=fq)
+        if not batch:
+            _FULL_BLOCK_UNTIL = time.time() + 60   # 失败后冷却 60 秒
+            break
+        for c in batch:
+            by_dt[c.dt] = c
+        # 不足一页 → 该日期之前已无更多数据（到上市首日）
+        if len(batch) < _FULL_PAGE:
+            break
+        earliest = batch[0].dt
+        if earliest <= "1991-01-01":
+            break
+        try:
+            prev = (datetime.strptime(earliest, "%Y-%m-%d")
+                    - timedelta(days=1)).strftime("%Y-%m-%d")
+        except ValueError:
+            break
+        if end == prev:
+            break
+        end = prev
+    return [by_dt[k] for k in sorted(by_dt)]
+
+
+def _aggregate_daily(candles: List[Candle], timeframe: str) -> List[Candle]:
+    """日线聚合为周线/月线：开取首日、高取最大、低取最小、收取末日、量求和。"""
+    if timeframe == "daily" or not candles:
+        return candles
+    groups = {}
+    order = []
+    for c in candles:
+        key = _period_key(c.dt, timeframe)
+        g = groups.get(key)
+        if g is None:
+            groups[key] = Candle(dt=c.dt, open=c.open, high=c.high,
+                                 low=c.low, close=c.close, volume=c.volume)
+            order.append(key)
+        else:
+            groups[key] = Candle(
+                dt=c.dt, open=g.open,
+                high=max(g.high, c.high), low=min(g.low, c.low),
+                close=c.close, volume=g.volume + c.volume,
+            )
+    return [groups[k] for k in order]
+
+
+def get_full_bars(code: str, timeframe: str = "daily") -> List[Candle]:
+    """获取股票全量历史 K 线（日线全量；周/月线由日线聚合）。
+
+    - 全量缓存：data/full/daily/{code}.csv（与筛选缓存 data/daily 隔离，
+      避免把全量塞进筛选缓存后拖慢全市场扫描）
+    - 首次：腾讯日线按日期区间分段拉取（每段 800 根，直到上市首日）；
+      复权方式优先前复权，出现负价则整只改用后复权
+    - 缓存 6 小时内直接使用，过期后整只重新拉取（约 1s）
+    """
+    if timeframe not in ("daily", "weekly", "monthly"):
+        return []
+    bars = _FULL_CACHE.get(code, "daily", ttl=6 * 3600)
+    # 防御：旧缓存若含前复权负价（累计分红超过股价），丢弃重拉
+    if bars and min(c.low for c in bars) <= 0:
+        bars = None
+    if not bars:
+        # 优先前复权；若全量中出现 <=0 的早期价格（累计分红超过股价），
+        # 整只改用后复权（连续、无负价、无除权缺口）
+        fq = "qfq"
+        bars = _fetch_full_daily(code, fq=fq)
+        if bars and min(c.low for c in bars) <= 0:
+            fq = "hfq"
+            bars = _fetch_full_daily(code, fq=fq)
+        if bars:
+            try:
+                _FULL_CACHE.set(code, "daily", bars)
+                _write_fq(code, fq)
+            except Exception:
+                pass
+    return _aggregate_daily(bars, timeframe) if bars else []
+
+
+# ---------------------------------------------------------------------------
 # 工具函数
 # ---------------------------------------------------------------------------
 def _market_prefix(code: str) -> str:
@@ -436,26 +607,59 @@ def get_quote_source() -> TencentQuoteSource:
     return TencentQuoteSource()
 
 
-def get_minute_data(code: str) -> dict:
-    """腾讯财经当日分时数据（1 分钟），返回 {"minutes": [...], "error": ...}。
+def _fetch_history_minute(symbol: str, date: str) -> Optional[list]:
+    """腾讯历史分时：day/query 返回最近 5 个交易日的分时，按日期取指定日。
 
-    腾讯分时接口返回条目格式：[HHMM, 价格, 累计成交量(手), 累计成交额(元)]，
-    其中成交量为当日累计、成交额为当日累计；逐分钟均价 = 累计成交额 / (累计成交量 * 100 股)。
+    返回条目列表（"HHMM 价格 累计量 累计额"）；该日期不在最近 5 日则返回 None。
+    """
+    import json
+    import urllib.request
+    url = f"https://web.ifzq.gtimg.cn/appstock/app/day/query?code={symbol}"
+    try:
+        req = urllib.request.Request(url)
+        req.add_header("User-Agent", "Mozilla/5.0")
+        r = json.loads(urllib.request.urlopen(req, timeout=10).read().decode("utf-8", "ignore"))
+    except Exception:
+        return None
+    d = (r.get("data") or {}).get(symbol) or {}
+    arr = d.get("data") or []
+    key = str(date).replace("-", "")[:8]
+    for item in arr:
+        if isinstance(item, dict) and str(item.get("date")) == key:
+            return item.get("data") or []
+    return None
+
+
+def get_minute_data(code: str, date: Optional[str] = None) -> dict:
+    """腾讯财经分时数据（1 分钟），返回 {"minutes": [...], "error": ...}。
+
+    - date 为空：当日分时（minute/query）
+    - date 指定：该日历史分时（day/query，仅最近 5 个交易日可用）
+
+    条目格式：[HHMM, 价格, 累计成交量(手), 累计成交额(元)]；
+    逐分钟均价 = 累计成交额 / (累计成交量 * 100 股)。
     """
     import json
     import urllib.request
     symbol = _market_prefix(code) + str(code).zfill(6)
-    url = f"https://web.ifzq.gtimg.cn/appstock/app/minute/query?code={symbol}"
-    try:
-        req = urllib.request.Request(url)
-        req.add_header("User-Agent", "Mozilla/5.0")
-        resp = urllib.request.urlopen(req, timeout=10)
-        r = json.loads(resp.read().decode("utf-8", "ignore"))
-    except Exception:
-        return {"minutes": [], "error": "分时数据获取失败"}
 
-    d = (r.get("data") or {}).get(symbol) or {}
-    rows = d.get("data", {}).get("data", []) or []
+    if date:
+        rows = _fetch_history_minute(symbol, date)
+        if rows is None:
+            return {"minutes": [],
+                    "error": f"分时数据仅保留最近 5 个交易日，{date} 的分时不可用"}
+    else:
+        url = f"https://web.ifzq.gtimg.cn/appstock/app/minute/query?code={symbol}"
+        try:
+            req = urllib.request.Request(url)
+            req.add_header("User-Agent", "Mozilla/5.0")
+            resp = urllib.request.urlopen(req, timeout=10)
+            r = json.loads(resp.read().decode("utf-8", "ignore"))
+        except Exception:
+            return {"minutes": [], "error": "分时数据获取失败"}
+        d = (r.get("data") or {}).get(symbol) or {}
+        rows = d.get("data", {}).get("data", []) or []
+
     minutes = []
     prev_vol = 0.0
     for row in rows:

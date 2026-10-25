@@ -11,7 +11,7 @@ const API = {
   cancelSync: '/api/cancel-sync',
   history: '/api/history',
   historyItem: (id) => `/api/history/${id}`,
-  kline: (code, tf) => `/api/kline/${code}?tf=${tf}`,
+  kline: (code, tf, date) => `/api/kline/${code}?tf=${tf}${date ? '&date=' + encodeURIComponent(date) : ''}&full=1`,   // full=1：日/周/月返回全量；date：该日分时
   report: (code) => `/api/report/${code}`,
   reportSearch: (kw) => `/api/report/search?kw=${kw}`,
   import: '/api/import',
@@ -87,6 +87,8 @@ const state = {
   klineChart: null,
   klineCode: null,       // 当前 K 线弹窗查看的股票代码
   klineTf: 'daily',      // 当前 K 线弹窗级别（minute/daily/weekly/monthly）
+  klineDate: null,       // 分时级别下查看的历史日期（null=当日）
+  klineList: [],         // K 线弹窗侧栏：当前筛选结果去重后的股票列表（上一只/下一只用）
   eventTab: null,        // 当前市场事件模块
   eventData: null,       // 当前模块数据
 };
@@ -188,6 +190,10 @@ function bindEvents() {
   // 弹窗
   document.getElementById('closeModal').addEventListener('click', closeModal);
   document.getElementById('modalBackdrop').addEventListener('click', closeModal);
+  // K 线：上一只 / 下一只 / 全屏
+  document.getElementById('klinePrev').addEventListener('click', () => klineStep(-1));
+  document.getElementById('klineNext').addEventListener('click', () => klineStep(1));
+  document.getElementById('klineFullBtn').addEventListener('click', toggleKlineFullscreen);
   // K 线级别切换（分时 / 日线 / 周线 / 月线）
   document.querySelectorAll('#klineTfSwitch .tf-btn').forEach((b) => {
     b.addEventListener('click', () => {
@@ -199,7 +205,25 @@ function bindEvents() {
   document.getElementById('selftestBackdrop').addEventListener('click', closeSelftest);
   document.getElementById('closeSeat').addEventListener('click', closeSeat);
   document.getElementById('seatBackdrop').addEventListener('click', closeSeat);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeModal(); closeSelftest(); closeSeat(); } });
+  document.addEventListener('keydown', (e) => {
+    const klineModal = document.getElementById('klineModal');
+    const klineOpen = klineModal && !klineModal.classList.contains('hidden');
+    if (e.key === 'Escape') {
+      // 全屏时先退出全屏，再按一次才关闭弹窗
+      if (klineOpen && klineModal.classList.contains('kline-full')) {
+        toggleKlineFullscreen();
+      } else {
+        closeModal(); closeSelftest(); closeSeat();
+      }
+      return;
+    }
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '');
+    if (klineOpen && !typing) {
+      if (e.key === 'ArrowLeft') { e.preventDefault(); klineStep(-1); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); klineStep(1); }
+      else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); toggleKlineFullscreen(); }
+    }
+  });
   window.addEventListener('resize', () => { if (state.klineChart) state.klineChart.resize(); });
   // 顶层功能切换
   document.querySelectorAll('#mainTabs .tab').forEach((t) => {
@@ -2639,16 +2663,111 @@ function generateReport() {
 // ===================== K线详情 =====================
 const KLINE_TF_ZH = { minute: '分时', daily: '日线', weekly: '周线', monthly: '月线' };
 
-async function openKline(code, tf) {
+// 当前筛选结果 → 去重股票列表（供侧栏与上一只/下一只使用）
+function klineStockList() {
+  const seen = new Set();
+  const out = [];
+  for (const r of (state.results || [])) {
+    if (!r || !r.code || seen.has(r.code)) continue;
+    seen.add(r.code);
+    out.push({ code: r.code, name: r.name || '', change_pct: r.change_pct });
+  }
+  return out;
+}
+
+// 右侧栏：筛选结果股票列表，点击切换 K 线
+function renderKlineSidebar() {
+  const box = document.getElementById('klineSidebar');
+  if (!box) return;
+  const list = klineStockList();
+  state.klineList = list;
+  if (!list.length) {
+    box.classList.add('hidden-side');
+    box.innerHTML = '';
+    return;
+  }
+  box.classList.remove('hidden-side');
+  const items = list.map((s) => {
+    const pct = (typeof s.change_pct === 'number') ? s.change_pct : null;
+    const up = (pct || 0) >= 0;
+    const color = pct == null ? 'var(--text-dim)' : (up ? 'var(--up)' : 'var(--down)');
+    const chg = pct == null ? '' : `${up ? '+' : ''}${pct}%`;
+    return `<div class="ks-item" data-code="${s.code}" title="${s.name || ''} ${s.code}">
+      <span class="ks-name">${s.name || s.code}</span>
+      <span class="ks-code">${s.code}</span>
+      <span class="ks-chg" style="color:${color}">${chg}</span>
+    </div>`;
+  }).join('');
+  box.innerHTML = `<div class="ks-head">筛选结果 <b>${list.length}</b> 只</div><div class="ks-list">${items}</div>`;
+  box.querySelectorAll('.ks-item[data-code]').forEach((el) => {
+    el.addEventListener('click', () => openKline(el.dataset.code, state.klineTf));
+  });
+}
+
+// 高亮侧栏当前股票，并滚动到可见区域
+function syncKlineSidebarActive() {
+  const box = document.getElementById('klineSidebar');
+  if (!box) return;
+  box.querySelectorAll('.ks-item').forEach((el) => {
+    const active = el.dataset.code === state.klineCode;
+    el.classList.toggle('active', active);
+    if (active) el.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+// 上一只/下一只按钮可用状态（列表为空或只有一只时禁用）
+function updateKlineNav() {
+  const prev = document.getElementById('klinePrev');
+  const next = document.getElementById('klineNext');
+  const ok = (state.klineList || []).length > 1;
+  if (prev) prev.disabled = !ok;
+  if (next) next.disabled = !ok;
+}
+
+// 上一只 / 下一只（循环切换，保持当前级别）
+function klineStep(delta) {
+  const list = state.klineList || [];
+  if (list.length < 2) return;
+  let idx = list.findIndex((s) => s.code === state.klineCode);
+  if (idx < 0) idx = 0;
+  const next = (idx + delta + list.length) % list.length;
+  openKline(list[next].code, state.klineTf, state.klineDate);
+}
+
+// 全屏切换（占满视口，Esc 退出）
+function toggleKlineFullscreen() {
+  const modal = document.getElementById('klineModal');
+  if (!modal || modal.classList.contains('hidden')) return;
+  const on = modal.classList.toggle('kline-full');
+  const btn = document.getElementById('klineFullBtn');
+  if (btn) {
+    btn.textContent = on ? '⤢' : '⛶';
+    btn.title = on ? '退出全屏（Esc）' : '全屏（F）';
+  }
+  // 布局变化后让 ECharts 重新适配容器尺寸
+  setTimeout(() => { if (state.klineChart) state.klineChart.resize(); }, 60);
+}
+
+// 请求序号：快速切换股票时，丢弃过期响应，避免旧图覆盖新图
+let _klineSeq = 0;
+
+async function openKline(code, tf, date) {
+  const seq = ++_klineSeq;
   const modal = document.getElementById('klineModal');
   modal.classList.remove('hidden');
   state.klineCode = code;
   state.klineTf = tf || 'daily';
+  state.klineDate = date || null;
   document.querySelectorAll('#klineTfSwitch .tf-btn').forEach((b) => {
     b.classList.toggle('active', b.dataset.tf === state.klineTf);
   });
+  // 侧栏 + 导航（当前结果去重后的股票池）
+  renderKlineSidebar();
+  syncKlineSidebarActive();
+  updateKlineNav();
   const tfZh = KLINE_TF_ZH[state.klineTf] || state.klineTf;
-  document.getElementById('modalTitle').textContent = `${code} · ${tfZh}`;
+  const titleBase = date ? `${code} · ${tfZh} ${date}` : `${code} · ${tfZh}`;
+  document.getElementById('modalTitle').textContent = `${titleBase} · 加载中…`;
   document.getElementById('modalLegend').innerHTML = '';
   document.getElementById('klineQuote').innerHTML = '';
   // 切换级别前销毁旧图表实例，避免 setOption 合并残留上一级别的 series
@@ -2656,10 +2775,21 @@ async function openKline(code, tf) {
   document.getElementById('klineChart').innerHTML = '';
 
   try {
-    const r = await fetch(API.kline(code, state.klineTf));
+    const r = await fetch(API.kline(code, state.klineTf, date));
     const data = await r.json();
-    if (data.error) { alert(data.error); closeModal(); return; }
-    if (data.name) document.getElementById('modalTitle').textContent = `${data.name} ${code} · ${tfZh}`;
+    if (seq !== _klineSeq) return;   // 已有更新的切换，丢弃本次结果
+    if (data.error) {
+      alert(data.error);
+      // 历史分时不可用：退回日线视图，避免直接关闭弹窗
+      if (date) { openKline(code, 'daily'); return; }
+      closeModal();
+      return;
+    }
+    if (data.name) {
+      document.getElementById('modalTitle').textContent = date
+        ? `${data.name} ${code} · ${tfZh} ${date}`
+        : `${data.name} ${code} · ${tfZh}`;
+    }
     renderKline(data);
   } catch (e) {
     console.error(e);
@@ -2667,9 +2797,14 @@ async function openKline(code, tf) {
 }
 
 function closeModal() {
-  document.getElementById('klineModal').classList.add('hidden');
+  const modal = document.getElementById('klineModal');
+  modal.classList.add('hidden');
+  modal.classList.remove('kline-full');   // 关闭时同步退出全屏状态
+  const btn = document.getElementById('klineFullBtn');
+  if (btn) { btn.textContent = '⛶'; btn.title = '全屏（F）'; }
   if (state.klineChart) { state.klineChart.dispose(); state.klineChart = null; }
   state.klineCode = null;
+  state.klineDate = null;
 }
 
 function renderKline(data) {
@@ -2764,6 +2899,8 @@ function renderMinuteChart(data) {
 function renderCandleChart(data) {
   const candles = data.candles;
   const dates = candles.map((c) => c.dt);
+  // 全量历史默认聚焦最近 250 根，拖动底部缩放条可查看全部
+  const zoomStart = dates.length > 250 ? ((dates.length - 250) / dates.length) * 100 : 0;
   const ohlc = candles.map((c) => [c.open, c.close, c.low, c.high]);
   const vols = candles.map((c) => ({
     value: c.volume,
@@ -2772,8 +2909,10 @@ function renderCandleChart(data) {
 
   const ma = (k) => candles.map((c) => c[k]);
 
+  const fqText = data.fq === 'hfq' ? ' · 后复权（价格轴为复权价）' : '';
+  const fbText = data.fallback ? ' · 全量数据暂不可用，显示最近缓存' : '';
   document.getElementById('modalLegend').innerHTML =
-    '<span style="color:var(--text-faint);font-size:12px">MA5/10/15/20/120/250 均线</span>';
+    `<span style="color:var(--text-faint);font-size:12px">MA5/10/15/20/120/250 均线${fqText}${fbText}</span>`;
 
   const chart = echarts.init(document.getElementById('klineChart'), 'dark');
   state.klineChart = chart;
@@ -2806,8 +2945,8 @@ function renderCandleChart(data) {
       { gridIndex: 1, scale: true, axisLabel: { color: C_DIM, show: false }, splitLine: { show: false } },
     ],
     dataZoom: [
-      { type: 'inside', xAxisIndex: [0, 1], start: 60, end: 100 },
-      { type: 'slider', xAxisIndex: [0, 1], bottom: 0, height: 18, start: 60, end: 100 },
+      { type: 'inside', xAxisIndex: [0, 1], start: zoomStart, end: 100 },
+      { type: 'slider', xAxisIndex: [0, 1], bottom: 0, height: 18, start: zoomStart, end: 100 },
     ],
     series: [
       {
@@ -2824,6 +2963,12 @@ function renderCandleChart(data) {
     ],
   };
   chart.setOption(option);
+  // 双击某根 K 线 → 查看该日（周/月线为该周期最后交易日）的日内分时
+  chart.on('dblclick', (params) => {
+    const date = params && params.name;
+    if (!date || !state.klineCode) return;
+    openKline(state.klineCode, 'minute', date);
+  });
 }
 
 function hexToRgba(hex, alpha) {

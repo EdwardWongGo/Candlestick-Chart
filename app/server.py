@@ -28,7 +28,8 @@ from flask import Flask, jsonify, request, send_file, send_from_directory
 import config
 from .patterns import all_patterns
 from .indicators import compute_ma
-from .data.source import get_source, get_quote_source, get_minute_data
+from .data.source import (get_source, get_quote_source, get_minute_data,
+                          get_full_bars, get_full_fq)
 from .data.cache import KlineCache
 from .data.universe import parse_codes
 from .jobs import JobManager
@@ -508,26 +509,40 @@ def history_item(hid):
 @app.route("/api/kline/<code>")
 def kline(code):
     tf = request.args.get("tf", "daily")
+    full = request.args.get("full") in ("1", "true", "yes")
+    date = request.args.get("date")   # 分时专用：指定历史日期（YYYY-MM-DD）
 
     # 日内分时：走腾讯分时接口（独立结构，非蜡烛图）
     if tf == "minute":
-        return _kline_minute(code)
+        return _kline_minute(code, date)
 
     if tf not in config.TIMEFRAMES:
         return jsonify({"error": "未知级别"}), 400
 
-    # K 线历史是追加式的，忽略 ttl 直接用本地缓存（避免缓存过期后重复拉取）
-    bars = _cache.get(code, tf, ttl=None)
-    if bars is None:
+    fallback = False
+    if full:
+        # 全量历史：日线分段拉全（独立缓存），周/月线由日线聚合
         try:
-            bars = get_source().get_bars(code, tf, config.KLINE_OFFSET)
+            bars = get_full_bars(code, tf)
         except Exception:
             bars = None
-        if bars:
+        if not bars:
+            # 全量拉取失败（如数据源被 WAF 拦截）→ 回退筛选缓存，保证仍可看图
+            bars = _cache.get(code, tf, ttl=None)
+            fallback = bool(bars)
+    else:
+        # K 线历史是追加式的，忽略 ttl 直接用本地缓存（避免缓存过期后重复拉取）
+        bars = _cache.get(code, tf, ttl=None)
+        if bars is None:
             try:
-                _cache.set(code, tf, bars)   # 写缓存失败不影响返回（文件锁等）
+                bars = get_source().get_bars(code, tf, config.KLINE_OFFSET)
             except Exception:
-                pass
+                bars = None
+            if bars:
+                try:
+                    _cache.set(code, tf, bars)   # 写缓存失败不影响返回（文件锁等）
+                except Exception:
+                    pass
 
     if not bars:
         return jsonify({"error": f"{code} 无 K 线数据"}), 404
@@ -564,23 +579,26 @@ def kline(code):
         "timeframe_zh": config.TIMEFRAMES[tf]["zh"],
         "name": quote.get("name", ""),
         "quote": quote,
+        "fq": get_full_fq(code) if full else "qfq",   # hfq：价格轴为后复权价
+        "fallback": fallback,   # true：全量拉取失败，已回退筛选缓存
         "candles": candles,
         "matches": matches,
     })
 
 
-def _kline_minute(code):
-    """日内分时数据（1 分钟） + 行情快照。"""
+def _kline_minute(code, date=None):
+    """分时数据（1 分钟） + 行情快照。date 指定时返回该日历史分时（最近 5 个交易日）。"""
     quote = {}
     try:
         quote = get_quote_source().get_quote(code)
     except Exception:
         quote = {}
-    md = get_minute_data(code)
+    md = get_minute_data(code, date)
     return jsonify({
         "code": code,
         "timeframe": "minute",
         "timeframe_zh": "分时",
+        "date": date,
         "name": quote.get("name", ""),
         "quote": quote,
         "minutes": md.get("minutes", []),
