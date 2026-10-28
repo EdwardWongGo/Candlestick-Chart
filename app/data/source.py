@@ -231,6 +231,8 @@ class TencentQuoteSource(DataSource):
                     "name": vals[1],
                     "price": _f(vals[3]),
                     "change_pct": _f(vals[32]),
+                    "market_cap": _f(vals[45]),    # 总市值（亿）
+                    "float_mcap": _f(vals[44]),    # 流通市值（亿）
                 }
         return result
 

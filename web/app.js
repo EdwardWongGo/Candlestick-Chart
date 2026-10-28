@@ -159,6 +159,12 @@ function bindEvents() {
   });
   // 结果表所有列点击排序
   document.querySelectorAll('th.sortable').forEach((th) => {
+    // 统一补排序箭头占位（原先只有「信号强度」列带 span，其他列缺）
+    if (!th.querySelector('.sort-arrow')) {
+      const s = document.createElement('span');
+      s.className = 'sort-arrow';
+      th.appendChild(s);
+    }
     th.addEventListener('click', () => {
       const key = th.dataset.key;
       if (state.sortKey === key) {
@@ -721,6 +727,10 @@ function collectParams() {
     price_max: num('priceMax'),
     change_min: num('changeMin'),
     change_max: num('changeMax'),
+    market_cap_min: num('marketCapMin'),
+    market_cap_max: num('marketCapMax'),
+    float_mcap_min: num('floatMcapMin'),
+    float_mcap_max: num('floatMcapMax'),
     exclude_st: document.getElementById('excludeSt').checked,
     // 参数化形态的运行时参数（如十字星数量），未设置则为 null
     pattern_params: collectPatternParams(),
@@ -1272,6 +1282,12 @@ async function loadHistoryItem(id) {
 
 
 // ===================== 结果渲染（含分页/统计） =====================
+// 市值格式化（亿元）：0/未知显示 —
+function fmtCap(v) {
+  const n = Number(v);
+  return (isFinite(n) && n > 0) ? n.toFixed(0) + '亿' : '—';
+}
+
 function renderResults() {
   setTableColumns('full');   // 筛选结果视图：恢复完整表头列
   let list = [...state.results];
@@ -1287,6 +1303,8 @@ function renderResults() {
     strength: (r) => r.strength,
     volume_ratio: (r) => r.volume_ratio,
     close: (r) => r.close,
+    market_cap: (r) => r.market_cap || 0,
+    float_mcap: (r) => r.float_mcap || 0,
     ytd_change: (r) => r.ytd_change || 0,
     limit_1y: (r) => r.limit_1y || 0,
     resonance: (r) => (r.resonance ? 1 : 0),
@@ -1358,6 +1376,8 @@ function renderResults() {
       <td class="strength-cell">${r.strength}</td>
       <td>${r.volume_ratio}×</td>
       <td>${r.close.toFixed(2)}</td>
+      <td>${fmtCap(r.market_cap)}</td>
+      <td>${fmtCap(r.float_mcap)}</td>
       <td class="${ytdCls}">${ytd}</td>
       <td>${r.limit_1y || 0}</td>
       <td>${resonanceTag}</td>
@@ -1447,6 +1467,7 @@ function renderGroupedResults(list, get) {
         <td><span class="tag tag-tf">${r.timeframe_zh}</span></td>
         <td>${r.pattern_zh}</td><td class="strength-cell">${r.strength}</td>
         <td>${r.volume_ratio}×</td><td>${r.close.toFixed(2)}</td>
+        <td>${fmtCap(r.market_cap)}</td><td>${fmtCap(r.float_mcap)}</td>
         <td class="${ytdCls(r.ytd_change)}">${fmtYtd(r.ytd_change)}</td>
         <td>${r.limit_1y || 0}</td><td>${resoTag(r)}</td>
       </tr>`).join('');
@@ -1457,6 +1478,7 @@ function renderGroupedResults(list, get) {
       <td><span class="tag tag-tf tag-group">${tfsZh}</span></td>
       <td>${patterns}</td><td class="strength-cell">${maxStrength}</td>
       <td>${maxVol}×</td><td>${best.close.toFixed(2)}</td>
+      <td>${fmtCap(best.market_cap)}</td><td>${fmtCap(best.float_mcap)}</td>
       <td class="${ytdCls(best.ytd_change)}">${fmtYtd(best.ytd_change)}</td>
       <td>${best.limit_1y || 0}</td><td>${resoTag(best)}</td>
     </tr>${detailRows}`;
@@ -2854,6 +2876,8 @@ function renderQuotePanel(q) {
 
 // 日内分时图：价格线 + 均价线 + 分钟成交量
 function renderMinuteChart(data) {
+  const statEl = document.getElementById('klineRangeStat');
+  if (statEl) statEl.classList.add('hidden');   // 分时图不显示区间统计
   const mins = data.minutes || [];
   if (!mins.length) {
     document.getElementById('klineChart').innerHTML = '<div class="kline-empty">暂无分时数据</div>';
@@ -2926,6 +2950,29 @@ function renderCandleChart(data) {
       backgroundColor: '#1c2330',
       borderColor: '#2a3444',
       textStyle: { color: C_TEXT },
+      formatter: (ps) => {
+        if (!ps || !ps.length) return '';
+        const idx = ps[0].dataIndex;
+        const c = candles[idx];
+        if (!c) return '';
+        const prev = idx > 0 ? candles[idx - 1].close : c.open;
+        const pct = prev ? (c.close - prev) / prev * 100 : 0;
+        const amp = prev ? (c.high - c.low) / prev * 100 : 0;   // 振幅：(最高-最低)/前收
+        const up = pct >= 0;
+        const color = up ? C_UP : C_DOWN;
+        const tfZh = state.klineTf === 'weekly' ? '周' : state.klineTf === 'monthly' ? '月' : '日';
+        const vol = c.volume >= 1e8 ? (c.volume / 1e8).toFixed(2) + '亿手'
+                  : c.volume >= 1e4 ? (c.volume / 1e4).toFixed(1) + '万手'
+                  : Math.round(c.volume) + '手';
+        return `<div style="font-size:12px;line-height:1.75;min-width:150px">
+          <div style="font-weight:600;margin-bottom:3px">${c.dt}</div>
+          <div>开盘 <b>${c.open.toFixed(2)}</b>　收盘 <b style="color:${color}">${c.close.toFixed(2)}</b></div>
+          <div>最高 <b>${c.high.toFixed(2)}</b>　最低 <b>${c.low.toFixed(2)}</b></div>
+          <div>${tfZh}涨幅 <b style="color:${color}">${up ? '+' : ''}${pct.toFixed(2)}%</b></div>
+          <div>${tfZh}振幅 <b>${amp.toFixed(2)}%</b></div>
+          <div style="color:#8b96a8">成交量 ${vol}</div>
+        </div>`;
+      },
     },
     legend: {
       data: ['K线', 'MA5', 'MA10', 'MA15', 'MA20', 'MA120', 'MA250'],
@@ -2963,12 +3010,51 @@ function renderCandleChart(data) {
     ],
   };
   chart.setOption(option);
+  bindKlineRangeStat(chart, candles);
   // 双击某根 K 线 → 查看该日（周/月线为该周期最后交易日）的日内分时
   chart.on('dblclick', (params) => {
     const date = params && params.name;
     if (!date || !state.klineCode) return;
     openKline(state.klineCode, 'minute', date);
   });
+}
+
+// 区间统计：拖动缩放条选择区间时，实时计算涨跌幅与振幅
+function bindKlineRangeStat(chart, candles) {
+  const el = document.getElementById('klineRangeStat');
+  if (!el) return;
+  const update = () => {
+    if (!candles || !candles.length) { el.classList.add('hidden'); return; }
+    const opt = chart.getOption();
+    const dz = (opt.dataZoom && opt.dataZoom[0]) || { start: 0, end: 100 };
+    const n = candles.length;
+    const s = Math.max(0, Math.floor((dz.start || 0) / 100 * n));
+    const e = Math.min(n - 1, Math.ceil((dz.end == null ? 100 : dz.end) / 100 * n) - 1);
+    if (e <= s) { el.classList.add('hidden'); return; }
+    let hi = -Infinity, lo = Infinity;
+    for (let k = s; k <= e; k++) {
+      if (candles[k].high > hi) hi = candles[k].high;
+      if (candles[k].low < lo) lo = candles[k].low;
+    }
+    const base = candles[s].open;
+    const last = candles[e].close;
+    const pct = base ? (last - base) / base * 100 : 0;
+    const amp = base ? (hi - lo) / base * 100 : 0;
+    const up = pct >= 0;
+    const color = up ? C_UP : C_DOWN;
+    el.classList.remove('hidden');
+    el.innerHTML = `<div style="color:var(--text-dim)">区间 ${candles[s].dt} ~ ${candles[e].dt}（${e - s + 1} 根）</div>
+      <div>涨跌 <b style="color:${color}">${up ? '+' : ''}${pct.toFixed(2)}%</b>　振幅 <b>${amp.toFixed(2)}%</b></div>`;
+  };
+  // 拖动时用 rAF 节流，避免每帧都 getOption
+  let raf = 0;
+  const schedule = () => {
+    if (raf) return;
+    raf = requestAnimationFrame(() => { raf = 0; update(); });
+  };
+  chart.off('dataZoom');
+  chart.on('dataZoom', schedule);
+  update();
 }
 
 function hexToRgba(hex, alpha) {

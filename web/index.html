@@ -158,6 +158,26 @@
             <input type="number" id="changeMax" step="0.1" placeholder="不限">
           </div>
         </div>
+        <div class="field-row extra-item" data-extra="market_cap">
+          <div class="field">
+            <label>总市值(亿) ≥</label>
+            <input type="number" id="marketCapMin" step="1" min="0" placeholder="不限">
+          </div>
+          <div class="field">
+            <label>总市值(亿) ≤</label>
+            <input type="number" id="marketCapMax" step="1" min="0" placeholder="不限">
+          </div>
+        </div>
+        <div class="field-row extra-item" data-extra="float_mcap">
+          <div class="field">
+            <label>流通市值(亿) ≥</label>
+            <input type="number" id="floatMcapMin" step="1" min="0" placeholder="不限">
+          </div>
+          <div class="field">
+            <label>流通市值(亿) ≤</label>
+            <input type="number" id="floatMcapMax" step="1" min="0" placeholder="不限">
+          </div>
+        </div>
       </section>
 
       <button class="scan-btn" id="scanBtn">🔍 开始筛选</button>
@@ -231,13 +251,15 @@
               <th class="sortable" data-key="strength">信号强度 <span class="sort-arrow">▾</span></th>
               <th class="sortable" data-key="volume_ratio">放量</th>
               <th class="sortable" data-key="close">现价</th>
+              <th class="sortable" data-key="market_cap">总市值</th>
+              <th class="sortable" data-key="float_mcap">流通市值</th>
               <th class="sortable" data-key="ytd_change">年内涨幅</th>
               <th class="sortable" data-key="limit_1y">年涨停</th>
               <th class="sortable" data-key="resonance">共振</th>
             </tr>
           </thead>
           <tbody id="resultBody">
-            <tr class="empty"><td colspan="11">选择条件后点击「开始筛选」</td></tr>
+            <tr class="empty"><td colspan="13">选择条件后点击「开始筛选」</td></tr>
           </tbody>
         </table>
       </div>
@@ -342,7 +364,10 @@
       <div class="modal-body kline-wrap">
         <div class="kline-body">
           <div class="kline-quote" id="klineQuote"></div>
-          <div id="klineChart" class="kline-chart"></div>
+          <div class="kline-chart-wrap">
+            <div id="klineChart" class="kline-chart"></div>
+            <div class="kline-range-stat hidden" id="klineRangeStat"></div>
+          </div>
         </div>
         <aside class="kline-sidebar" id="klineSidebar"></aside>
       </div>

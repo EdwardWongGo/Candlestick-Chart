@@ -685,6 +685,17 @@ body {
 .kq-u { color: var(--text-faint); font-style: normal; font-size: 11px; margin-left: 2px; }
 .kline-body .kline-chart { width: 100%; flex: 1; min-height: 0; }
 
+/* 区间统计浮层（拖动缩放条选择区间时显示涨跌幅/振幅） */
+.kline-chart-wrap { position: relative; flex: 1; min-height: 0; display: flex; }
+.kline-chart-wrap .kline-chart { flex: 1; min-height: 0; width: 100%; }
+.kline-range-stat {
+  position: absolute; top: 8px; right: 14px; z-index: 5;
+  background: rgba(28,35,48,.92); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 10px; font-size: 12px; line-height: 1.65; pointer-events: none;
+  color: var(--text); white-space: nowrap;
+}
+.kline-range-stat.hidden { display: none; }
+
 /* ===== K线弹窗：右侧筛选结果栏 ===== */
 .kline-sidebar {
   width: 210px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0;

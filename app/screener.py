@@ -268,7 +268,36 @@ class Screener:
                     if row is not None:
                         results.append(row)
 
-        # 4. 跨级别共振
+        # 4.1 市值（总市值/流通市值）：仅对命中股票批量拉快照，避免全市场逐只请求
+        if results:
+            hit_codes = list({r.code for r in results})
+            try:
+                cap_quotes = get_quote_source().batch_quotes(hit_codes)
+            except Exception:
+                cap_quotes = {}
+            # 整批快照失败时跳过市值过滤（避免误杀全部）；单只取不到则市值留 0
+            if cap_quotes:
+                mc_min = params.get("market_cap_min")
+                mc_max = params.get("market_cap_max")
+                fm_min = params.get("float_mcap_min")
+                fm_max = params.get("float_mcap_max")
+                kept = []
+                for r in results:
+                    q = cap_quotes.get(r.code) or {}
+                    r.market_cap = float(q.get("market_cap") or 0.0)
+                    r.float_mcap = float(q.get("float_mcap") or 0.0)
+                    if mc_min is not None and r.market_cap < mc_min:
+                        continue
+                    if mc_max is not None and r.market_cap > mc_max:
+                        continue
+                    if fm_min is not None and r.float_mcap < fm_min:
+                        continue
+                    if fm_max is not None and r.float_mcap > fm_max:
+                        continue
+                    kept.append(r)
+                results = kept
+
+        # 4.2 跨级别共振
         self._apply_resonance(results)
 
         # 5. 排序

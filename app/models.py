@@ -120,6 +120,8 @@ class ScanResult:
     candle_indexes: list = field(default_factory=list)    # 图上高亮用的 K 线下标
     limit_1y: int = 0        # 近一年涨停次数（本地日线推导）
     ytd_change: float = 0.0  # 年内涨幅%（今年首个交易日至最新收盘的累计涨幅）
+    market_cap: float = 0.0  # 总市值（亿元）
+    float_mcap: float = 0.0  # 流通市值（亿元）
 
     def to_dict(self) -> dict:
         return {
@@ -144,5 +146,7 @@ class ScanResult:
             "resonance_levels": self.resonance_levels,
             "limit_1y": self.limit_1y,
             "ytd_change": round(self.ytd_change, 2),
+            "market_cap": round(self.market_cap, 2),
+            "float_mcap": round(self.float_mcap, 2),
             "candle_indexes": self.candle_indexes,
         }
