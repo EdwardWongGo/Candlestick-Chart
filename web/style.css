@@ -145,6 +145,8 @@ body {
 .event-table tbody tr:hover { background: var(--bg-hover); }
 .event-table tbody tr.clickable { cursor: pointer; }
 .reason-cell { max-width: 360px; white-space: normal; line-height: 1.5; color: var(--text-dim); }
+.seat-cell { max-width: 300px; white-space: normal; line-height: 1.6; font-size: 12px; color: var(--text-dim); }
+.seat-cell b { color: var(--text); font-weight: 600; }
 /* 涨停简图：题材分组头行 */
 .pic-theme td {
   background: var(--bg-hover); color: var(--text);

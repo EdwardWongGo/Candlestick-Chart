@@ -12,6 +12,7 @@ output/
 data/*
 !data/README.md
 启动日志.log
+服务日志.log
 *.csv
 *.EBK
 *.ebk

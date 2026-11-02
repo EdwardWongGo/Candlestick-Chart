@@ -23,6 +23,7 @@ const API = {
   ladder: (date) => `/api/ladder${date ? '?date=' + date : ''}`,
   ladderDown: () => '/api/ladder-down',
   dragonTiger: (date) => `/api/dragon-tiger${date ? '?date=' + date : ''}`,
+  dragonTigerBoard: (kind, date) => `/api/dragon-tiger/board/${kind}${date ? '?date=' + date : ''}`,
   dragonTigerSeats: (code, date) => `/api/dragon-tiger/${code}${date ? '?date=' + date : ''}`,
   dragonTigerHistory: (code, days = 180) => `/api/dragon-tiger/history/${code}?days=${days}`,
   latestDate: '/api/latest-trade-date',
@@ -1627,6 +1628,11 @@ const SUB_TABS = {
     { key: 'opened', zh: '跌停打开' },
   ],
   ladder: [{ key: 'up', zh: '涨停连板' }, { key: 'down', zh: '跌停连板' }],
+  lhb: [
+    { key: 'all', zh: '全部上榜' },
+    { key: 'institution', zh: '机构榜' },
+    { key: 'hotmoney', zh: '游资榜' },
+  ],
 };
 
 function switchTab(tab) {
@@ -1737,7 +1743,9 @@ async function loadEvent(tab) {
         ? await (await fetchTimeout(API.ladderDown())).json()
         : await (await fetchTimeout(API.ladder(date))).json();
     } else if (tab === 'lhb') {
-      data = await (await fetchTimeout(API.dragonTiger(date))).json();
+      data = (sub === 'institution' || sub === 'hotmoney')
+        ? await (await fetchTimeout(API.dragonTigerBoard(sub, date))).json()
+        : await (await fetchTimeout(API.dragonTiger(date))).json();
     } else if (tab === 'hotspot') {
       data = await (await fetchTimeout(API.hotspot(date))).json();
     } else if (tab === 'news') {
@@ -1779,7 +1787,9 @@ function renderEventData(tab, sub, data) {
     if (sub === 'down') renderLadder(data, true);
     else renderLadder(data, false);
   } else if (tab === 'lhb') {
-    renderDragonTiger(data);
+    if (sub === 'institution') renderInstitutionBoard(data);
+    else if (sub === 'hotmoney') renderHotMoneyBoard(data);
+    else renderDragonTiger(data);
   } else if (tab === 'hotspot') {
     renderHotspot(data);
   } else if (tab === 'news') {
@@ -2078,8 +2088,141 @@ function renderLhbTable(d) {
   });
 }
 
-async function openSeat(code) {
-  const date = document.getElementById('eventDate').value || '';
+// ===================== 机构榜 / 游资榜 =====================
+// 龙虎榜按资金性质拆分：机构专用席位 = 机构，其余营业部席位 = 游资
+let ibSortKey = null, ibSortDesc = true;
+let hmSortKey = null, hmSortDesc = true;
+
+function _boardSorted(list, key, desc, fieldMap) {
+  if (!key) return [...list];
+  const f = fieldMap[key] || (() => 0);
+  return [...list].sort((a, b) => (desc ? f(b) - f(a) : f(a) - f(b)));
+}
+
+function _boardHeader(key, desc, curKey, label) {
+  const arrow = curKey === key ? (desc ? ' ▾' : ' ▴') : '';
+  return `<th class="lhb-sortable" data-key="${key}">${label}${arrow}</th>`;
+}
+
+function _bindBoardSort(selector, curKey, desc, handler) {
+  document.querySelectorAll(selector).forEach((el) => {
+    el.addEventListener('click', () => {
+      const k = el.dataset.key;
+      handler(k);
+    });
+  });
+}
+
+function renderInstitutionBoard(d) {
+  const stats = document.getElementById('eventStats');
+  if (d.note) { stats.textContent = d.note; document.getElementById('eventContent').innerHTML = ''; return; }
+  stats.innerHTML = `<b>${d.date}</b> · 共 <b>${d.count}</b> 只 · 按机构净买入排序（仅统计龙虎榜披露的机构专用席位）`;
+  renderInstitutionTable(d);
+}
+
+function renderInstitutionTable(d) {
+  const fieldMap = {
+    change_pct: (s) => s.change_pct,
+    buy_wan: (s) => s.buy_wan,
+    sell_wan: (s) => s.sell_wan,
+    net_wan: (s) => s.net_wan,
+    buy_times: (s) => s.buy_times,
+    turnover_pct: (s) => s.turnover_pct,
+  };
+  const list = _boardSorted(d.stocks || [], ibSortKey, ibSortDesc, fieldMap);
+  const rows = list.map((s) => {
+    const netCls = s.net_wan >= 0 ? 'num-up' : 'num-down';
+    return `<tr class="clickable" data-code="${s.code}">
+      <td class="cell-code">${s.code}</td><td>${s.name}</td><td>${s.market_zh}</td>
+      <td class="${s.change_pct >= 0 ? 'num-up' : 'num-down'}">${s.change_pct >= 0 ? '+' : ''}${s.change_pct}%</td>
+      <td class="num-up">${s.buy_wan}万</td>
+      <td class="num-down">${s.sell_wan}万</td>
+      <td class="${netCls}"><b>${s.net_wan >= 0 ? '+' : ''}${s.net_wan}万</b></td>
+      <td>${s.buy_times} / ${s.sell_times}</td>
+      <td>${s.turnover_pct}%</td>
+      <td class="reason-cell">${s.reason}</td></tr>`;
+  }).join('');
+  const empty = '<tr><td colspan="10" style="text-align:center;color:var(--text-faint);padding:40px">当日无机构上榜</td></tr>';
+  document.getElementById('eventContent').innerHTML =
+    `<table class="event-table"><thead><tr><th>代码</th><th>名称</th><th>板块</th>
+      ${_boardHeader('change_pct', ibSortDesc, ibSortKey, '涨跌幅')}
+      ${_boardHeader('buy_wan', ibSortDesc, ibSortKey, '机构买入')}
+      ${_boardHeader('sell_wan', ibSortDesc, ibSortKey, '机构卖出')}
+      ${_boardHeader('net_wan', ibSortDesc, ibSortKey, '机构净买')}
+      ${_boardHeader('buy_times', ibSortDesc, ibSortKey, '机构买/卖家数')}
+      ${_boardHeader('turnover_pct', ibSortDesc, ibSortKey, '换手')}
+      <th>上榜原因</th></tr></thead><tbody>${rows || empty}</tbody></table>`;
+  _bindBoardSort('#eventContent .lhb-sortable', ibSortKey, ibSortDesc, (k) => {
+    if (ibSortKey === k) ibSortDesc = !ibSortDesc;
+    else { ibSortKey = k; ibSortDesc = true; }
+    renderInstitutionTable(d);
+  });
+  document.querySelectorAll('#eventContent tr[data-code]').forEach((tr) => {
+    tr.addEventListener('click', () => openSeat(tr.dataset.code));
+  });
+}
+
+function renderHotMoneyBoard(d) {
+  const stats = document.getElementById('eventStats');
+  if (d.note) { stats.textContent = d.note; document.getElementById('eventContent').innerHTML = ''; return; }
+  stats.innerHTML = `<b>${d.date}</b> · 共 <b>${d.count}</b> 只 · 按游资净买入排序（营业部席位口径，已剔除机构专用/沪深股通）`;
+  renderHotMoneyTable(d);
+}
+
+function renderHotMoneyTable(d) {
+  const fieldMap = {
+    change_pct: (s) => s.change_pct,
+    buy_wan: (s) => s.buy_wan,
+    sell_wan: (s) => s.sell_wan,
+    net_wan: (s) => s.net_wan,
+    seat_count: (s) => s.seat_count,
+  };
+  const list = _boardSorted(d.stocks || [], hmSortKey, hmSortDesc, fieldMap);
+  const rows = list.map((s) => {
+    const netCls = s.net_wan >= 0 ? 'num-up' : 'num-down';
+    const seats = (s.top_seats || [])
+      .map((x) => `<span title="${x.name}">${shortSeatName(x.name)} <b>${x.buy_wan}万</b></span>`)
+      .join('<br>');
+    return `<tr class="clickable" data-code="${s.code}">
+      <td class="cell-code">${s.code}</td><td>${s.name}</td><td>${s.market_zh}</td>
+      <td class="${s.change_pct >= 0 ? 'num-up' : 'num-down'}">${s.change_pct >= 0 ? '+' : ''}${s.change_pct}%</td>
+      <td class="num-up">${s.buy_wan}万</td>
+      <td class="num-down">${s.sell_wan}万</td>
+      <td class="${netCls}"><b>${s.net_wan >= 0 ? '+' : ''}${s.net_wan}万</b></td>
+      <td>${s.seat_count}</td>
+      <td class="seat-cell">${seats || '—'}</td></tr>`;
+  }).join('');
+  const empty = '<tr><td colspan="9" style="text-align:center;color:var(--text-faint);padding:40px">当日无游资上榜</td></tr>';
+  document.getElementById('eventContent').innerHTML =
+    `<table class="event-table"><thead><tr><th>代码</th><th>名称</th><th>板块</th>
+      ${_boardHeader('change_pct', hmSortDesc, hmSortKey, '涨跌幅')}
+      ${_boardHeader('buy_wan', hmSortDesc, hmSortKey, '游资买入')}
+      ${_boardHeader('sell_wan', hmSortDesc, hmSortKey, '游资卖出')}
+      ${_boardHeader('net_wan', hmSortDesc, hmSortKey, '游资净买')}
+      ${_boardHeader('seat_count', hmSortDesc, hmSortKey, '席位数')}
+      <th>主要买入席位（买入额）</th></tr></thead><tbody>${rows || empty}</tbody></table>`;
+  _bindBoardSort('#eventContent .lhb-sortable', hmSortKey, hmSortDesc, (k) => {
+    if (hmSortKey === k) hmSortDesc = !hmSortDesc;
+    else { hmSortKey = k; hmSortDesc = true; }
+    renderHotMoneyTable(d);
+  });
+  document.querySelectorAll('#eventContent tr[data-code]').forEach((tr) => {
+    tr.addEventListener('click', () => openSeat(tr.dataset.code));
+  });
+}
+
+// 营业部全名太长（XX证券股份有限公司XX营业部），列表里压缩成「XX证券·XX路」
+function shortSeatName(name) {
+  if (!name) return '';
+  let s = name
+    .replace(/股份有限公司|有限责任公司|有限公司/g, '')
+    .replace(/证券营业部|营业部|分公司|交易单元/g, '')
+    .replace(/\(.*?\)/g, '')
+    .trim();
+  return s.length > 16 ? s.slice(0, 16) + '…' : s;
+}
+
+async function openSeat(code) {  const date = document.getElementById('eventDate').value || '';
   state.seatCode = code;
   document.getElementById('seatTitle').textContent = `${code} · 龙虎榜详情`;
   document.getElementById('seatBody').innerHTML = '<div style="padding:20px;color:var(--text-dim)">加载中…</div>';

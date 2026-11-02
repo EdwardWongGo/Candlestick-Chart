@@ -482,6 +482,155 @@ def _count_year_listings() -> dict:
     return dict(cnt)
 
 
+# ---------------------------------------------------------------------------
+# 机构榜 / 游资榜（把龙虎榜按资金性质拆开看）
+# ---------------------------------------------------------------------------
+_ORG_SEAT_CODE = "0"                        # 机构专用席位代码
+_PASS_KEYWORDS = ("沪股通", "深股通", "港股通", "陆股通")
+
+# 榜单缓存：盘后数据当天不再变化，来回切子页不必重复请求东财
+_board_cache: dict = {}
+_BOARD_TTL = 600
+
+
+def _board_cached(key, builder):
+    ent = _board_cache.get(key)
+    if ent and time.time() - ent[0] < _BOARD_TTL:
+        return ent[1]
+    val = builder()
+    _board_cache[key] = (time.time(), val)
+    return val
+
+
+def _is_hot_money_seat(seat_code, seat_name: str) -> bool:
+    """游资席位 = 剔除「机构专用」与沪深股通后的营业部席位。"""
+    if str(seat_code) == _ORG_SEAT_CODE:
+        return False
+    name = str(seat_name or "")
+    return not any(k in name for k in _PASS_KEYWORDS)
+
+
+def get_institution_board(date_dashed: str = None) -> dict:
+    """机构榜：当日机构专用席位的买卖统计，按机构净买入额排序。
+
+    数据源 RPT_ORGANIZATION_TRADE_DETAILS 已按「股票 × 当日」聚合过机构席位，
+    BUY_TIMES / SELL_TIMES 是买入 / 卖出的机构家数。
+    """
+    d = date_dashed or last_completed_trade_date()
+
+    def _build():
+        data = _em_datacenter(
+            "RPT_ORGANIZATION_TRADE_DETAILS",
+            filter_str=f"(TRADE_DATE='{d}')",
+            page_size=500, sort_columns="NET_BUY_AMT", sort_types="-1",
+        )
+        if not data:
+            return {"date": d, "count": 0, "stocks": [],
+                    "note": "无数据（非交易日或盘后未更新）"}
+        stocks = []
+        seen = set()          # 同一只票可能带多条上榜原因，避免重复计入
+        for row in data:
+            code = str(row.get("SECURITY_CODE", "")).zfill(6)
+            if code in seen:
+                continue
+            seen.add(code)
+            stocks.append({
+                "code": code,
+                "name": row.get("SECURITY_NAME_ABBR", ""),
+                "market_zh": _market_zh(code),
+                "close": row.get("CLOSE_PRICE") or 0,
+                "change_pct": round(float(row.get("CHANGE_RATE") or 0), 2),
+                "buy_wan": round((row.get("BUY_AMT") or 0) / 10000, 1),
+                "sell_wan": round((row.get("SELL_AMT") or 0) / 10000, 1),
+                "net_wan": round((row.get("NET_BUY_AMT") or 0) / 10000, 1),
+                "buy_times": int(row.get("BUY_TIMES") or 0),
+                "sell_times": int(row.get("SELL_TIMES") or 0),
+                "turnover_pct": round(float(row.get("TURNOVERRATE") or 0), 2),
+                "amount_wan": round((row.get("ACCUM_AMOUNT") or 0) / 10000, 0),
+                "reason": row.get("EXPLANATION", ""),
+            })
+        return {"date": str(data[0].get("TRADE_DATE", ""))[:10] or d,
+                "count": len(stocks), "stocks": stocks}
+
+    return _board_cached(("inst", d), _build)
+
+
+def get_hot_money_board(date_dashed: str = None, top_seats: int = 3) -> dict:
+    """游资榜：当日营业部席位（剔除机构专用 / 沪深股通）按个股汇总的净买入排名。
+
+    游资没有官方标签，业内按「席位性质」划分：机构专用席位 = 机构，其余营业部席位 = 游资。
+    买入额取买入席位表的 BUY，卖出额取卖出席位表的 SELL，两者相减得游资净买入。
+    """
+    d = date_dashed or last_completed_trade_date()
+
+    def _build():
+        buy_rows = _em_datacenter(
+            "RPT_BILLBOARD_DAILYDETAILSBUY",
+            filter_str=f"(TRADE_DATE='{d}')", page_size=1500,
+        )
+        sell_rows = _em_datacenter(
+            "RPT_BILLBOARD_DAILYDETAILSSELL",
+            filter_str=f"(TRADE_DATE='{d}')", page_size=1500,
+        )
+        if not buy_rows and not sell_rows:
+            return {"date": d, "count": 0, "stocks": [],
+                    "note": "无数据（非交易日或盘后未更新）"}
+
+        agg: dict = {}
+
+        def _slot(code: str) -> dict:
+            return agg.setdefault(code, {
+                "code": code, "buy": 0.0, "sell": 0.0, "seats": {},
+                "change_pct": 0.0, "close": 0.0,
+            })
+
+        for row in buy_rows:
+            if not _is_hot_money_seat(row.get("OPERATEDEPT_CODE"), row.get("OPERATEDEPT_NAME")):
+                continue
+            a = _slot(str(row.get("SECURITY_CODE", "")).zfill(6))
+            amt = float(row.get("BUY") or 0)
+            a["buy"] += amt
+            if amt > 0:
+                # 同一营业部可能有多个交易单元，按名称合并
+                seat = str(row.get("OPERATEDEPT_NAME", "")) or "（未标注席位）"
+                a["seats"][seat] = a["seats"].get(seat, 0.0) + amt
+            if row.get("CHANGE_RATE") is not None:
+                a["change_pct"] = round(float(row.get("CHANGE_RATE") or 0), 2)
+            a["close"] = row.get("CLOSE_PRICE") or a["close"]
+
+        for row in sell_rows:
+            if not _is_hot_money_seat(row.get("OPERATEDEPT_CODE"), row.get("OPERATEDEPT_NAME")):
+                continue
+            a = _slot(str(row.get("SECURITY_CODE", "")).zfill(6))
+            a["sell"] += float(row.get("SELL") or 0)
+            if not a["close"] and row.get("CLOSE_PRICE"):
+                a["close"] = row["CLOSE_PRICE"]
+            if not a["change_pct"] and row.get("CHANGE_RATE") is not None:
+                a["change_pct"] = round(float(row.get("CHANGE_RATE") or 0), 2)
+
+        universe = load_universe()
+        stocks = []
+        for a in agg.values():
+            seats = sorted(a["seats"].items(), key=lambda kv: -kv[1])[:top_seats]
+            stocks.append({
+                "code": a["code"],
+                "name": universe.name_of(a["code"]),
+                "market_zh": _market_zh(a["code"]),
+                "close": a["close"],
+                "change_pct": a["change_pct"],
+                "buy_wan": round(a["buy"] / 10000, 1),
+                "sell_wan": round(a["sell"] / 10000, 1),
+                "net_wan": round((a["buy"] - a["sell"]) / 10000, 1),
+                "seat_count": len(a["seats"]),
+                "top_seats": [{"name": n, "buy_wan": round(v / 10000, 1)} for n, v in seats],
+            })
+        stocks.sort(key=lambda s: -s["net_wan"])
+        stocks = stocks[:150]
+        return {"date": d, "count": len(stocks), "stocks": stocks}
+
+    return _board_cached(("hot", d, top_seats), _build)
+
+
 def get_dragon_tiger_seats(code: str, date_dashed: str = None) -> dict:
     """个股龙虎榜席位明细（买卖 TOP5 + 机构动向）。"""
     date_dashed = date_dashed or _today_str()

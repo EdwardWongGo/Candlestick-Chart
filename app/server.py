@@ -40,6 +40,7 @@ from .market_events import (
     get_limit_board, get_lan_board, get_ladder, get_limit_picture,
     get_action_analysis,
     get_dragon_tiger, get_dragon_tiger_seats, latest_trade_date,
+    get_institution_board, get_hot_money_board,
     get_hotspots, get_news,
     get_dt_ladder, get_daily_news, get_dragon_tiger_history,
     get_seal_rate, get_opened,
@@ -241,6 +242,17 @@ def dragon_tiger_history(code):
 def dragon_tiger():
     date = request.args.get("date") or None
     return jsonify(get_dragon_tiger(date))
+
+
+@app.route("/api/dragon-tiger/board/<kind>")
+def dragon_tiger_board(kind):
+    """机构榜 / 游资榜：kind = institution | hotmoney"""
+    date = request.args.get("date") or None
+    if kind == "institution":
+        return jsonify(get_institution_board(date))
+    if kind == "hotmoney":
+        return jsonify(get_hot_money_board(date))
+    return jsonify({"error": f"未知榜单类型：{kind}"}), 400
 
 
 @app.route("/api/dragon-tiger/<code>")
