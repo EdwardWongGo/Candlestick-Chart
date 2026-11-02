@@ -35,7 +35,11 @@ SYNC_META_PATH = os.path.join(BASE_DIR, "data", "sync_meta.json")
 _SYNC_WORKERS = 8
 
 # 增量同步时拉取的最近 K 线根数（用于对比本地最新日期，追加新 bar）
-SYNC_LOOKBACK = 5
+# 必须覆盖「两次同步之间的最大合理间断」：原值 5 太小，2026 国庆假期（9/18 → 10/12，
+# 中间 10 个交易日）后首次同步只拉到假期后的 5 根，中间 10 天永久丢失，导致缓存出现
+# 日期断层 —— 形态识别把跨断层的 K 线当成「连续 N 根」，过期/破位形态被误判为命中。
+# 30 根日线 ≈ 6 周，可覆盖长假 + 多日未开工具；若间断更长，下面的断层检测会改拉全量。
+SYNC_LOOKBACK = 30
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +113,18 @@ def sync_incremental(codes: List[str], timeframes: List[str],
             if cached:
                 last_dt = cached[-1].dt
                 latest = source.get_bars(code, tf, SYNC_LOOKBACK)
+                # 数据源返回空 ≠ 已最新：可能是服务端拒绝/网络抖动。旧逻辑静默判 skip，
+                # 结果 1882 只周线缓存停在 10-16 却报告「同步完成」，扫描用的仍是旧周期。
+                if not latest:
+                    latest = source.get_bars(code, tf, SYNC_LOOKBACK)
+                if not latest:
+                    return "empty"
+                # 断层检测：若最近窗口的首根仍晚于缓存最后日期，说明「窗口没接上缓存尾」，
+                # 只追加窗口内的 bar 会在中间留下永久空档 → 改拉全量，把缺口一并补齐
+                if latest[0].dt > last_dt:
+                    full = source.get_bars(code, tf, config.KLINE_OFFSET)
+                    if full and full[0].dt <= last_dt:
+                        latest = full
                 new_bars = [b for b in latest if b.dt > last_dt]
                 if new_bars:
                     # 周线/月线：同一周期只保留最新一根（未完成周期的 dt 会随拉取日变化，
