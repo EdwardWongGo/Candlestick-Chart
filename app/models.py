@@ -110,7 +110,9 @@ class ScanResult:
     direction_zh: str = ""   # 看涨 / 看跌
     date: str = ""           # 出现日期
     strength: float = 0.0    # 加权后信号强度 0-100
-    volume_ratio: float = 1.0  # 放量倍数
+    volume_ratio: float = 1.0  # 量能水平 = 成交量 / 前 20 根均量
+    volume_ratio_prev: float = 1.0  # 较前量 = 成交量 / 前一根成交量（「放量倍数」筛选口径）
+    latest_change_pct: float = 0.0  # 最新交易日涨跌幅%（相对前一日收盘）
     close: float = 0.0       # 现价/收盘价
     change_pct: float = 0.0  # 涨跌幅
     position: float = -1.0   # 相对位置 0(支撑)~1(阻力)
@@ -138,6 +140,8 @@ class ScanResult:
             "date": self.date,
             "strength": round(self.strength, 1),
             "volume_ratio": round(self.volume_ratio, 2),
+            "volume_ratio_prev": round(self.volume_ratio_prev, 2),
+            "latest_change_pct": round(self.latest_change_pct, 2),
             "close": self.close,
             "change_pct": round(self.change_pct, 2),
             "position": round(self.position, 3),

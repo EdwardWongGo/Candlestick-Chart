@@ -74,7 +74,7 @@ def sma_trend(candles: List[Candle], i: int, short: int = 5, long: int = 10) -> 
 # 量能
 # ---------------------------------------------------------------------------
 def volume_ratio(candles: List[Candle], i: int, period: int = 20) -> float:
-    """放量倍数 = candles[i].volume / 前 period 根均量。"""
+    """放量倍数 = candles[i].volume / 前 period 根均量（量能相对常态的水平）。"""
     if candles[i].volume <= 0:
         return 1.0
     base = [c.volume for c in candles[max(0, i - period):i]]
@@ -84,6 +84,22 @@ def volume_ratio(candles: List[Candle], i: int, period: int = 20) -> float:
     if avg <= 0:
         return 1.0
     return candles[i].volume / avg
+
+
+def volume_ratio_prev(candles: List[Candle], i: int, n: int = 1) -> float:
+    """较前量 = candles[i].volume / candles[i-n].volume（「放量」筛选口径）。
+
+    与 volume_ratio 的区别：那个是和 20 日均量比，衡量「量能相对常态的水平」；
+    这个是和紧邻的前一根比，衡量「这一根比上一根放大了多少倍」。
+    筛选条件「放量倍数 ≥ x」用的是本函数 —— 要求信号这根的成交量 ≥ 前一根 × x。
+    前一根无量（停牌/数据缺失）或越界时返回 1.0。
+    """
+    if i - n < 0 or candles[i].volume <= 0:
+        return 1.0
+    prev = candles[i - n].volume
+    if prev <= 0:
+        return 1.0
+    return candles[i].volume / prev
 
 
 # ---------------------------------------------------------------------------

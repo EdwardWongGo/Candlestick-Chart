@@ -79,7 +79,7 @@ const state = {
   scanning: false,       // 是否正在扫描
   scanStartTime: null,   // 扫描开始时间戳（用于 ETA 估算）
   lastParams: null,      // 最近一次成功扫描的参数（用于「重新加载」）
-  sortKey: 'strength',   // 默认按信号强度排序
+  sortKey: 'latest_change_pct',   // 默认按最新涨跌幅排序
   sortDesc: true,
   resonanceOnly: false,
   groupByStock: false,   // 按股票分组：同股多级别折叠为一行，点击展开明细
@@ -1312,7 +1312,8 @@ function renderResults() {
     timeframe: (r) => r.timeframe,
     pattern: (r) => r.pattern_zh,
     strength: (r) => r.strength,
-    volume_ratio: (r) => r.volume_ratio,
+    latest_change_pct: (r) => r.latest_change_pct ?? 0,
+    volume_ratio_prev: (r) => r.volume_ratio_prev ?? r.volume_ratio,
     close: (r) => r.close,
     market_cap: (r) => r.market_cap || 0,
     float_mcap: (r) => r.float_mcap || 0,
@@ -1320,7 +1321,7 @@ function renderResults() {
     limit_1y: (r) => r.limit_1y || 0,
     resonance: (r) => (r.resonance ? 1 : 0),
   };
-  const get = SORT_FIELD[state.sortKey] || SORT_FIELD.strength;
+  const get = SORT_FIELD[state.sortKey] || SORT_FIELD.latest_change_pct;
   list.sort((a, b) => {
     const va = get(a), vb = get(b);
     if (typeof va === 'number' && typeof vb === 'number') {
@@ -1384,8 +1385,8 @@ function renderResults() {
       <td><span class="tag tag-tf">${r.market_zh || '—'}</span></td>
       <td><span class="tag tag-tf">${r.timeframe_zh}</span></td>
       <td>${r.pattern_zh}</td>
-      <td class="strength-cell">${r.strength}</td>
-      <td>${r.volume_ratio}×</td>
+      <td class="${(r.latest_change_pct ?? 0) >= 0 ? 'num-up' : 'num-down'}">${(r.latest_change_pct >= 0 ? '+' : '')}${(r.latest_change_pct ?? 0).toFixed(2)}%</td>
+      <td>${(r.volume_ratio_prev ?? r.volume_ratio)}×</td>
       <td>${r.close.toFixed(2)}</td>
       <td>${fmtCap(r.market_cap)}</td>
       <td>${fmtCap(r.float_mcap)}</td>
@@ -1425,7 +1426,7 @@ function renderGroupedResults(list, get) {
   }
   const groupArr = [...groups.values()];
   // 组排序：用组内「最强行」的值参与当前排序
-  const bestOf = (rows) => rows.reduce((x, y) => (y.strength > x.strength ? y : x), rows[0]);
+  const bestOf = (rows) => rows.reduce((x, y) => ((y.latest_change_pct ?? 0) > (x.latest_change_pct ?? 0) ? y : x), rows[0]);
   groupArr.sort((a, b) => {
     const va = get(bestOf(a)), vb = get(bestOf(b));
     if (typeof va === 'number' && typeof vb === 'number') {
@@ -1468,16 +1469,15 @@ function renderGroupedResults(list, get) {
       .sort((a, b) => (TF_ORDER[a] ?? 9) - (TF_ORDER[b] ?? 9))
       .map((z) => z.replace('线', '')).join('');
     const patterns = [...new Set(rows.map((r) => r.pattern_zh).filter(Boolean))].join('、');
-    const maxStrength = Math.max(...rows.map((r) => r.strength));
-    const maxVol = Math.max(...rows.map((r) => r.volume_ratio));
+    const maxVol = Math.max(...rows.map((r) => (r.volume_ratio_prev ?? r.volume_ratio)));
     // 明细行（默认隐藏）
     const detailRows = rows.map((r) => `
       <tr class="group-detail hidden" data-code="${r.code}" data-tf="${r.timeframe}" title="点击查看该级别K线">
         <td class="cell-code">${r.code}</td><td>${r.name}</td>
         <td><span class="tag tag-tf">${r.market_zh || '—'}</span></td>
         <td><span class="tag tag-tf">${r.timeframe_zh}</span></td>
-        <td>${r.pattern_zh}</td><td class="strength-cell">${r.strength}</td>
-        <td>${r.volume_ratio}×</td><td>${r.close.toFixed(2)}</td>
+        <td>${r.pattern_zh}</td><td class="${(r.latest_change_pct ?? 0) >= 0 ? 'num-up' : 'num-down'}">${(r.latest_change_pct >= 0 ? '+' : '')}${(r.latest_change_pct ?? 0).toFixed(2)}%</td>
+        <td>${(r.volume_ratio_prev ?? r.volume_ratio)}×</td><td>${r.close.toFixed(2)}</td>
         <td>${fmtCap(r.market_cap)}</td><td>${fmtCap(r.float_mcap)}</td>
         <td class="${ytdCls(r.ytd_change)}">${fmtYtd(r.ytd_change)}</td>
         <td>${r.limit_1y || 0}</td><td>${resoTag(r)}</td>
@@ -1487,7 +1487,7 @@ function renderGroupedResults(list, get) {
       <td class="cell-code">${best.code}</td><td>${best.name}</td>
       <td><span class="tag tag-tf">${best.market_zh || '—'}</span></td>
       <td><span class="tag tag-tf tag-group">${tfsZh}</span></td>
-      <td>${patterns}</td><td class="strength-cell">${maxStrength}</td>
+      <td>${patterns}</td><td class="${(best.latest_change_pct ?? 0) >= 0 ? 'num-up' : 'num-down'}">${(best.latest_change_pct >= 0 ? '+' : '')}${(best.latest_change_pct ?? 0).toFixed(2)}%</td>
       <td>${maxVol}×</td><td>${best.close.toFixed(2)}</td>
       <td>${fmtCap(best.market_cap)}</td><td>${fmtCap(best.float_mcap)}</td>
       <td class="${ytdCls(best.ytd_change)}">${fmtYtd(best.ytd_change)}</td>
@@ -1542,7 +1542,13 @@ function renderStats() {
 }
 
 function updatePagination(total, page, totalPages) {
-  document.getElementById('pageInfo').textContent = `共 ${total} 条 · 第 ${page}/${totalPages} 页`;
+  // 分组模式下 total 是「股票只数」（同股多级别折叠成一行），不是信号条数，
+  // 直接写「共 N 条」会让人误以为可以按级别相加 —— 明确标出单位与原始条数
+  const grouped = state.groupByStock;
+  const label = grouped
+    ? `共 ${total} 只（${(state.results || []).length} 条信号）`
+    : `共 ${total} 条`;
+  document.getElementById('pageInfo').textContent = `${label} · 第 ${page}/${totalPages} 页`;
   document.getElementById('prevPage').disabled = page <= 1;
   document.getElementById('nextPage').disabled = page >= totalPages;
   // 数字页码导航（含省略号）
@@ -2780,7 +2786,7 @@ function drawIndexKline(el, d) {
 function generateReport() {
   if (!state.results.length) return;
   const st = state.scanStats || {};
-  const results = [...state.results].sort((a, b) => b.strength - a.strength);
+  const results = [...state.results].sort((a, b) => (b.latest_change_pct ?? 0) - (a.latest_change_pct ?? 0));
   const all = results;   // 展示全部筛选结果（不再截断前 30 条）
   const resonanceStocks = [...new Set(state.results.filter((r) => r.resonance).map((r) => r.code + ' ' + r.name))];
   const upCount = state.results.filter((r) => r.direction === 'bullish').length;
@@ -2790,7 +2796,7 @@ function generateReport() {
   const rows = all.map((r) => `
     <tr>
       <td>${r.code}</td><td>${r.name}</td><td>${r.market_zh}</td><td>${r.timeframe_zh}</td>
-      <td>${r.pattern_zh}</td><td>${r.strength}</td><td>${r.volume_ratio}×</td>
+      <td>${r.pattern_zh}</td><td>${(r.latest_change_pct >= 0 ? '+' : '')}${(r.latest_change_pct ?? 0).toFixed(2)}%</td><td>${(r.volume_ratio_prev ?? r.volume_ratio)}×</td>
       <td>${r.resonance ? '✓' : ''}</td>
     </tr>`).join('');
 
@@ -2821,9 +2827,9 @@ function generateReport() {
     <div class="card"><div class="num" style="color:#f23645">${upCount}</div><div class="lbl">看涨信号</div></div>
     <div class="card"><div class="num" style="color:#26a69a">${downCount}</div><div class="lbl">看跌信号</div></div>
   </div>
-  <h2>全部信号（${all.length} 条，按强度排序）</h2>
+  <h2>全部信号（${all.length} 条，按最新涨跌幅排序）</h2>
   <table><thead><tr>
-    <th>代码</th><th>名称</th><th>板块</th><th>级别</th><th>形态</th><th>强度</th><th>放量</th><th>共振</th>
+    <th>代码</th><th>名称</th><th>板块</th><th>级别</th><th>形态</th><th>涨跌幅</th><th>较前量</th><th>共振</th>
   </tr></thead><tbody>${rows}</tbody></table>
   ${resonanceStocks.length ? `<h2>跨级别共振股票（${resonanceStocks.length} 只）</h2><div>${resonanceStocks.map((s) => `<span class="tag">${s}</span>`).join('')}</div>` : ''}
   <div class="disclaimer">本报告由 A股量化分析工具自动生成，仅用于技术形态学习与研究，不构成任何投资建议。股市有风险，投资需谨慎。</div>

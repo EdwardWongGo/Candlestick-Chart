@@ -19,6 +19,7 @@ from typing import Callable, Dict, List, Optional
 import config
 from .models import Candle, PatternMatch, ScanResult
 from .patterns import detect_patterns
+from .patterns import base
 from .indicators import change_pct, above_ma250
 from .limit_analysis import count_limit_up
 from .data.source import get_source, get_quote_source
@@ -352,10 +353,13 @@ class Screener:
         i = m.index
         k = bars[i]
 
-        # 放量倍数
-        vr = m.volume_ratio
+        # 放量倍数：要求信号这一根的成交量 ≥ 前一根 × volume_min。
+        # 旧口径是「对前 20 根均量的倍数」——前一根缩量时，本根只要略高于均量就会被判成
+        # 放量，与「放量」的直观含义不符（用户 2026-11-06 指出）。
+        vr = m.volume_ratio                          # 量能水平（相对 20 日均量），展示/打分用
+        vr_prev = base.volume_ratio_prev(bars, i)    # 较前量（相对前一根），筛选口径
         volume_min = params.get("volume_min")
-        if volume_min is not None and vr < volume_min:
+        if volume_min is not None and vr_prev < volume_min:
             return None
 
         # 价格区间（用信号当日收盘价）
@@ -367,7 +371,7 @@ class Screener:
         if price_max is not None and price > price_max:
             return None
 
-        # 涨跌幅区间
+        # 涨跌幅区间（信号日口径，保持既有筛选语义）
         chg = change_pct(bars, i)
         change_min = params.get("change_min")
         change_max = params.get("change_max")
@@ -375,6 +379,10 @@ class Screener:
             return None
         if change_max is not None and chg > change_max:
             return None
+
+        # 最新交易日涨跌幅（相对前一交易日收盘），结果表展示用
+        last_i = len(bars) - 1
+        latest_chg = change_pct(bars, last_i) if last_i > 0 else chg
 
         # 相对位置字段已废弃（「相对位置」筛选条件与展示列均已移除），
         # 不再做 O(60) 的支撑阻力计算，仅保留占位，避免无谓开销拖慢全市场扫描
@@ -401,6 +409,8 @@ class Screener:
             date=m.date,
             strength=round(strength, 1),
             volume_ratio=vr,
+            volume_ratio_prev=round(vr_prev, 2),
+            latest_change_pct=round(latest_chg, 2),
             close=price,
             change_pct=round(chg, 2),
             position=-1.0,
