@@ -11,7 +11,6 @@ set "LOG_FILE=%~dp0启动日志.log"
 set "SVC_LOG=%~dp0服务日志.log"
 set "PORT=8000"
 
-reg add "HKCU\Console" /v QuickEdit /t REG_DWORD /d 1 /f >nul 2>&1
 
 > "%LOG_FILE%" echo [%date% %time%] ===== 启动 A股蜡烛图形态筛选工具 =====
 >> "%LOG_FILE%" echo 启动目录: %~dp0 2>nul

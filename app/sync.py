@@ -41,6 +41,28 @@ _SYNC_WORKERS = 8
 # 30 根日线 ≈ 6 周，可覆盖长假 + 多日未开工具；若间断更长，下面的断层检测会改拉全量。
 SYNC_LOOKBACK = 30
 
+# 复权口径一致性阈值：源返回的「同日期收盘价」与缓存相差超过该比例，判定两个源的
+# 价格基准不同（如通达信不复权 vs 腾讯前复权），此时增量续接会把两套基准拼进同一
+# 文件，跨除权日出现价格跳变 —— 必须改成全量覆盖。
+PRICE_MISMATCH_TOL = 0.005      # 0.5%
+
+
+def _price_mismatch(cached: List[Candle], latest: List[Candle]) -> Optional[float]:
+    """比较缓存最后一根与源返回的同日期收盘价，返回相对差异；无法比较返回 None。
+
+    同一交易所数据在不同源之间应当完全一致（差异为 0），出现差异只可能来自
+    复权口径不同或数据修正。
+    """
+    if not cached or not latest:
+        return None
+    last = cached[-1]
+    for b in latest:
+        if b.dt == last.dt:
+            if not last.close or not b.close:
+                return None
+            return abs(b.close - last.close) / abs(last.close)
+    return None
+
 
 # ---------------------------------------------------------------------------
 # 同步时间元数据
@@ -100,7 +122,8 @@ def sync_incremental(codes: List[str], timeframes: List[str],
 
     total = len(codes) * len(timeframes)
     lock = threading.Lock()
-    state = {"done": 0, "synced": 0, "failed": 0, "empty": 0, "cancelled": False}
+    state = {"done": 0, "synced": 0, "repaired": 0, "failed": 0, "empty": 0,
+             "cancelled": False}
 
     def _task(item):
         """单个 (code, tf) 的同步任务。返回 synced/skip/empty/failed。"""
@@ -118,6 +141,18 @@ def sync_incremental(codes: List[str], timeframes: List[str],
                 if not latest:
                     latest = source.get_bars(code, tf, SYNC_LOOKBACK)
                 if not latest:
+                    return "empty"
+                # 复权口径一致性：源返回的同日期收盘价与缓存对不上 → 两个源的价格基准不同，
+                # 增量续接会把两套基准拼进同一文件（跨除权日价格跳变），改用全量覆盖重写
+                mismatch = _price_mismatch(cached, latest)
+                if mismatch is not None and mismatch > PRICE_MISMATCH_TOL:
+                    full = source.get_bars(code, tf, config.KLINE_OFFSET)
+                    min_bars = config.MIN_BARS.get(tf, 120)
+                    # 长度保护：源给不出与现有缓存相当的根数时宁可不覆盖，
+                    # 否则 260 根会被 30 根覆盖，MA250 直接算不出来（越修越少）
+                    if full and len(full) >= min(len(cached), min_bars):
+                        cache.set(code, tf, full[-min_bars:])
+                        return "repaired"
                     return "empty"
                 # 断层检测：若最近窗口的首根仍晚于缓存最后日期，说明「窗口没接上缓存尾」，
                 # 只追加窗口内的 bar 会在中间留下永久空档 → 改拉全量，把缺口一并补齐
@@ -149,6 +184,9 @@ def sync_incremental(codes: List[str], timeframes: List[str],
                 state["done"] += 1
                 if result == "synced":
                     state["synced"] += 1
+                elif result == "repaired":
+                    state["synced"] += 1
+                    state["repaired"] += 1
                 elif result == "failed":
                     state["failed"] += 1
                 elif result == "empty":
@@ -162,10 +200,12 @@ def sync_incremental(codes: List[str], timeframes: List[str],
     last_sync = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     if not state["cancelled"]:
         _save_meta({"last_sync": last_sync, "synced_count": state["synced"],
+                    "repaired": state["repaired"],
                     "failed": state["failed"], "empty": state["empty"]})
 
     return {
         "synced": state["synced"],
+        "repaired": state["repaired"],
         "failed": state["failed"],
         "empty": state["empty"],
         "elapsed": round(time.time() - t0, 2),

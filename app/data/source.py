@@ -17,12 +17,94 @@ from __future__ import annotations
 import os
 import threading
 import time
+from collections import deque
 from datetime import datetime, timedelta
 from typing import List, Optional
 
 from ..models import Candle
 from .cache import KlineCache, _period_key
 import config
+
+
+# ---------------------------------------------------------------------------
+# 全局请求节流（硬闸）
+# ---------------------------------------------------------------------------
+# 教训：2026-11-01 修复缓存时短时间发出约 3 万次请求，通达信 K 线接口当日下午起
+# 全面拒绝服务（只回 2 字节数量头、无数据体），至今未恢复。从此给所有外部行情请求
+# 加一道滑动窗口硬闸：无论上层怎么并发、怎么重试，都不会把服务端打爆。
+_REQ_WINDOW = 60.0             # 统计窗口（秒）
+_REQ_MAX_PER_WINDOW = 2400     # 窗口内最多请求数（40 次/秒）
+_req_times: "deque[float]" = deque()
+_req_lock = threading.Lock()
+
+
+def _throttle():
+    """滑动窗口限速：达到上限后阻塞等待，直到窗口内腾出位置。"""
+    while True:
+        with _req_lock:
+            now = time.time()
+            while _req_times and now - _req_times[0] > _REQ_WINDOW:
+                _req_times.popleft()
+            if len(_req_times) < _REQ_MAX_PER_WINDOW:
+                _req_times.append(now)
+                return
+            wait = _REQ_WINDOW - (now - _req_times[0]) + 0.01
+        time.sleep(min(max(wait, 0.01), 2.0))
+
+
+def request_stats() -> dict:
+    """当前请求速率（供调试/状态展示）。"""
+    with _req_lock:
+        now = time.time()
+        recent = [t for t in _req_times if now - t <= _REQ_WINDOW]
+        return {"window_sec": _REQ_WINDOW, "limit": _REQ_MAX_PER_WINDOW,
+                "used": len(recent)}
+
+
+# ---------------------------------------------------------------------------
+# 通达信 K 线接口熔断
+# ---------------------------------------------------------------------------
+# 背景：通达信 K 线接口被服务端拒绝时（只回 2 字节数量头、无数据体，2026-11 故障），
+# 每个同步任务仍会先试一次通达信再走腾讯兜底 —— 全市场 15642 个任务要白试 1.5 万次，
+# 耗时从 4 分钟涨到 70 分钟，8 线程并发还把 CPU 顶满。连续失败达到阈值后熔断，
+# 冷却期内直接走腾讯兜底，不再试探。
+_TDX_FAIL_STREAK = 0
+_TDX_CIRCUIT_UNTIL = 0.0
+_TDX_LOCK = threading.Lock()
+TDX_FAIL_THRESHOLD = 3        # 连续失败几次后熔断
+TDX_COOLDOWN = 300.0          # 熔断持续秒数，到期后放行一次重试
+
+
+def tdx_circuit_open() -> bool:
+    """通达信 K 线接口是否处于熔断（已降级到腾讯兜底）。"""
+    return time.time() < _TDX_CIRCUIT_UNTIL
+
+
+def tdx_circuit_remaining() -> int:
+    """熔断剩余秒数（未熔断返回 0）。"""
+    return max(0, int(_TDX_CIRCUIT_UNTIL - time.time()))
+
+
+def reset_tdx_circuit():
+    """重置熔断（每次手动同步开始前调用，允许重新试探通达信）。"""
+    global _TDX_FAIL_STREAK, _TDX_CIRCUIT_UNTIL
+    with _TDX_LOCK:
+        _TDX_FAIL_STREAK = 0
+        _TDX_CIRCUIT_UNTIL = 0.0
+
+
+def _tdx_note_failure():
+    global _TDX_FAIL_STREAK, _TDX_CIRCUIT_UNTIL
+    with _TDX_LOCK:
+        _TDX_FAIL_STREAK += 1
+        if _TDX_FAIL_STREAK >= TDX_FAIL_THRESHOLD:
+            _TDX_CIRCUIT_UNTIL = time.time() + TDX_COOLDOWN
+
+
+def _tdx_note_success():
+    global _TDX_FAIL_STREAK
+    with _TDX_LOCK:
+        _TDX_FAIL_STREAK = 0
 
 
 class DataSource:
@@ -114,15 +196,26 @@ class MootdxSource(DataSource):
         return config.TIMEFRAMES[timeframe]["frequency"]
 
     def get_bars(self, code: str, timeframe: str, count: int) -> List[Candle]:
+        # 熔断中：通达信 K 线接口刚被判定不可用，直接走腾讯兜底，
+        # 省掉每只股票一次注定失败的 TCP 请求（全市场能省 1.5 万次）
+        if tdx_circuit_open():
+            return get_fallback_source().get_bars(code, timeframe, count)
         freq = self._frequency(timeframe)
         # 注意：mootdx 0.11.x 的参数名为 frequency（category 会被 **kwargs 吞掉）
+        failed = False
+        _throttle()
         try:
             df = self.client.bars(symbol=code, frequency=freq, offset=count)
         except Exception:
             df = None
+            failed = True
         if df is None or len(df) == 0:
-            # 通达信 K 线接口被服务端拒绝（返回空）时，兜底走腾讯 HTTP K 线
+            # 异常（服务端拒绝/连接问题）计入熔断；单纯空数据（停牌等）不计
+            if failed:
+                _tdx_note_failure()
+            # 兜底走腾讯 HTTP K 线
             return get_fallback_source().get_bars(code, timeframe, count)
+        _tdx_note_success()
         # mootdx 返回的 df 中 datetime 可能同时作为索引和列，仅当缺少该列时才 reset_index
         if "datetime" not in df.columns:
             df = df.reset_index()
@@ -156,6 +249,7 @@ class TencentQuoteSource(DataSource):
         try:
             req = urllib.request.Request(url)
             req.add_header("User-Agent", "Mozilla/5.0")
+            _throttle()
             resp = urllib.request.urlopen(req, timeout=8)
             data = resp.read().decode("gbk", errors="ignore")
         except Exception:
@@ -208,6 +302,7 @@ class TencentQuoteSource(DataSource):
             try:
                 req = urllib.request.Request(url)
                 req.add_header("User-Agent", "Mozilla/5.0")
+                _throttle()
                 resp = urllib.request.urlopen(req, timeout=10)
                 data = resp.read().decode("gbk", errors="ignore")
             except Exception:
@@ -254,11 +349,12 @@ class TencentKlineSource(DataSource):
 
     # 时间级别 → 腾讯 period
     _PERIOD = {"daily": "day", "weekly": "week", "monthly": "month"}
-    # (域名, 路径)：备用域名 proxy.finance.qq.com 需带 /ifzqgtimg 前缀；
-    # 主域名 web.ifzq.gtimg.cn 路径不同，作为第二候选。
+    # (域名, 路径)：两个域名都必须用 newfqkline —— 老的 fqkline 接口已被腾讯
+    # WAF 拦死（无论哪个域名都返回 HTTP 501 + waf.tencent.com 跳转页），
+    # 只有 newfqkline 返回 200 且数据结构不变（仍是 qfqday/qfqweek/qfqmonth）。
     _HOSTS = (
-        ("proxy.finance.qq.com", "/ifzqgtimg/appstock/app/fqkline/get"),
-        ("web.ifzq.gtimg.cn", "/appstock/app/fqkline/get"),
+        ("proxy.finance.qq.com", "/ifzqgtimg/appstock/app/newfqkline/get"),
+        ("web.ifzq.gtimg.cn", "/appstock/app/newfqkline/get"),
     )
     _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36")
@@ -277,6 +373,7 @@ class TencentKlineSource(DataSource):
         candles: List[Candle] = []
         for host, path in self._HOSTS:
             try:
+                _throttle()
                 r = requests.get(
                     f"https://{host}{path}",
                     params={"param": param},
@@ -336,6 +433,7 @@ class SinaKlineSource(DataSource):
                f"var%20_{symbol}=/CN_MarketDataService.getKLineData"
                f"?symbol={symbol}&scale={scale}&ma=no&datalen={count}")
         try:
+            _throttle()
             r = requests.get(url, headers={"User-Agent": self._UA},
                              timeout=10)
             m = re.search(r"\[(.*)\]", r.text, re.S)
@@ -412,6 +510,7 @@ def _fetch_tencent_daily(code: str, end: Optional[str] = None,
     day_key = (fq + "day") if fq else "day"
     for host, path in TencentKlineSource._HOSTS:
         try:
+            _throttle()
             r = requests.get(
                 f"https://{host}{path}",
                 params={"param": param},
@@ -620,6 +719,7 @@ def _fetch_history_minute(symbol: str, date: str) -> Optional[list]:
     try:
         req = urllib.request.Request(url)
         req.add_header("User-Agent", "Mozilla/5.0")
+        _throttle()
         r = json.loads(urllib.request.urlopen(req, timeout=10).read().decode("utf-8", "ignore"))
     except Exception:
         return None
@@ -655,6 +755,7 @@ def get_minute_data(code: str, date: Optional[str] = None) -> dict:
         try:
             req = urllib.request.Request(url)
             req.add_header("User-Agent", "Mozilla/5.0")
+            _throttle()
             resp = urllib.request.urlopen(req, timeout=10)
             r = json.loads(resp.read().decode("utf-8", "ignore"))
         except Exception:

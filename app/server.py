@@ -29,7 +29,8 @@ import config
 from .patterns import all_patterns
 from .indicators import compute_ma
 from .data.source import (get_source, get_quote_source, get_minute_data,
-                          get_full_bars, get_full_fq)
+                          get_full_bars, get_full_fq,
+                          reset_tdx_circuit, tdx_circuit_open, tdx_circuit_remaining)
 from .data.cache import KlineCache
 from .data.universe import parse_codes
 from .jobs import JobManager
@@ -339,9 +340,13 @@ def sync_status():
         "total": _SYNC_STATE["total"],
         "msg": _SYNC_STATE["msg"],
         "synced": _SYNC_STATE["synced"],
+        "repaired": _SYNC_STATE.get("repaired", 0),
         "failed": _SYNC_STATE["failed"],
         "empty": _SYNC_STATE["empty"],
         "error": _SYNC_STATE["error"],
+        # 通达信 K 线接口熔断状态：true 表示已降级到腾讯兜底
+        "tdx_degraded": tdx_circuit_open(),
+        "tdx_retry_in": tdx_circuit_remaining(),
     }
     return jsonify(st)
 
@@ -352,7 +357,7 @@ _SYNC_CANCEL = threading.Event()
 # 同步进行状态（供前端轮询进度条）
 _SYNC_STATE = {
     "active": False, "done": 0, "total": 0, "msg": "",
-    "synced": 0, "failed": 0, "empty": 0,
+    "synced": 0, "repaired": 0, "failed": 0, "empty": 0,
     "last_sync": None, "error": None,
 }
 _SYNC_STATE_LOCK = threading.Lock()
@@ -381,6 +386,7 @@ def sync_now():
       - 空 → 使用 config.DEFAULT_SERVER_PRESET
     """
     _SYNC_CANCEL.clear()   # 每次同步开始前重置取消标志
+    reset_tdx_circuit()    # 每次手动同步前也重置熔断，给通达信一次重试机会
     body = request.get_json(silent=True) or {}
     codes = body.get("codes") or None
     timeframes = body.get("timeframes") or config.SYNC_TIMEFRAMES
@@ -423,7 +429,8 @@ def sync_now():
 
     total_units = len(codes) * len(timeframes)
     _update_sync_state(active=True, done=0, total=total_units, msg="准备中…",
-                       synced=0, failed=0, empty=0, last_sync=None, error=None)
+                       synced=0, repaired=0, failed=0, empty=0,
+                       last_sync=None, error=None)
 
     def _run():
         try:
@@ -433,7 +440,9 @@ def sync_now():
                                       server=custom_server, source_kind=source_kind,
                                       cancel_cb=lambda: _SYNC_CANCEL.is_set())
             _update_sync_state(
-                synced=result.get("synced", 0), failed=result.get("failed", 0),
+                synced=result.get("synced", 0),
+                repaired=result.get("repaired", 0),
+                failed=result.get("failed", 0),
                 empty=result.get("empty", 0), last_sync=result.get("last_sync"),
             )
         except Exception as e:

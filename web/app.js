@@ -722,6 +722,14 @@ function collectParams() {
     verify_patterns: verifyPatterns.length ? verifyPatterns : null,   // 需要验证的形态
     above_ma250: document.getElementById('aboveMa250').checked,
     sync: false,   // 「同步服务器数据」选项已移除，筛选仅基于本地缓存（服务器同步由「数据来源→服务器」连接触发）
+    // 筛选使用的 K 线数据源：与「数据来源 → 数据服务器」下拉共用。
+    // 只影响「本地缓存里没有、需要现拉」的股票；缓存命中的股票直接读本地文件，与源无关。
+    source: (() => {
+      const sel = document.getElementById('serverPreset');
+      if (!sel) return null;
+      const cur = ((state.meta && state.meta.server_presets) || []).find((p) => p.key === sel.value);
+      return (cur && cur.kind === 'custom') ? null : sel.value;   // 自定义服务器需填地址，筛选暂不启用
+    })(),
     limit_up_count_min: num('limitUpCountMin'),
     volume_min: num('volumeMin'),
     price_min: num('priceMin'),
@@ -981,7 +989,9 @@ function onServerPresetChange() {
   const cur = presets.find((p) => p.key === sel.value);
   const descEl = document.getElementById('serverPresetDesc');
   const addrRow = document.getElementById('serverAddrRow');
-  if (descEl) descEl.textContent = cur ? `来源：${cur.source}。${cur.desc}` : '';
+  if (descEl) descEl.textContent = cur
+    ? `来源：${cur.source}。${cur.desc}此选择同时作用于筛选：本地缓存缺失的 K 线按此源补拉。`
+    : '';
   if (addrRow) addrRow.classList.toggle('hidden', !(cur && cur.kind === 'custom'));
 }
 

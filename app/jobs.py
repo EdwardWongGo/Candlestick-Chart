@@ -20,6 +20,7 @@ import uuid
 from typing import Dict, Optional
 
 from .screener import Screener, ScanCancelled
+from .data.source import get_source
 from .errlog import write_errlog
 
 
@@ -30,7 +31,23 @@ class JobManager:
         self._jobs: Dict[str, dict] = {}
         self._lock = threading.Lock()
         self._screener = Screener()
+        self._screeners: Dict[str, Screener] = {}   # 按数据源缓存 Screener（同源复用）
         self._last_result: Optional[dict] = None   # 最近一次成功结果缓存
+
+    def _screener_for(self, kind: Optional[str] = None,
+                      server: Optional[list] = None) -> Screener:
+        """按数据源取 Screener：预设源按 kind 缓存实例，自定义服务器每次新建。
+
+        kind 为空 = 默认源（config.DEFAULT_SERVER_PRESET）。
+        """
+        if server:
+            return Screener(source=get_source(server=server))
+        key = (kind or "").strip()
+        if not key:
+            return self._screener
+        if key not in self._screeners:
+            self._screeners[key] = Screener(source=get_source(kind=key))
+        return self._screeners[key]
 
     # ------------------------------------------------------------------
     def submit(self, params: dict) -> str:
@@ -76,8 +93,9 @@ class JobManager:
             return bool(job.get("cancelled"))
 
         try:
-            result = self._screener.scan(params, progress_cb=cb,
-                                         cancel_cb=should_cancel)
+            screener = self._screener_for(params.get("source"), params.get("source_server"))
+            result = screener.scan(params, progress_cb=cb,
+                                   cancel_cb=should_cancel)
             job["progress"] = 100
             job["message"] = f"扫描完成，命中 {result['total']} 条"
             job["result"] = result

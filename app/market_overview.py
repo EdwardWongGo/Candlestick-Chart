@@ -73,8 +73,9 @@ def _get_index_kline(symbol: str, tf: str = "day", count: int = 120) -> list:
         return _get_em_index_kline(symbol, tf, count)
     param_tf, tag = _KLINE_TF[tf]
     try:
+        # 必须用 newfqkline：老 fqkline 已被腾讯 WAF 拦死（HTTP 501）
         r = _session.get(
-            "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/fqkline/get",
+            "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get",
             params={"param": f"{symbol},{param_tf},,,{count},qfq"},
             headers={"User-Agent": _UA, "Referer": "https://gu.qq.com/"}, timeout=8,
         )
