@@ -825,3 +825,18 @@ body {
 .selftest-case.pass .icon { color: var(--down); }
 .selftest-case.fail .icon { color: var(--up); }
 .selftest-case .actual { color: var(--text-dim); font-size: 11px; }
+
+/* 历史结果只读：时间级别/板块 chip 置灰禁改 */
+.chip.locked { opacity: .55; cursor: not-allowed; }
+.chip.locked::after { content: ' 🔒'; font-size: 10px; }
+/* 不允许取消最后一个选项时的提示动画 */
+.chip-flash { animation: chipShake .35s; box-shadow: 0 0 0 2px var(--down); }
+@keyframes chipShake {
+  0%, 100% { transform: translateX(0); }
+  30% { transform: translateX(-3px); }
+  70% { transform: translateX(3px); }
+}
+/* 历史只读状态下所有条件控件的视觉反馈 */
+body.params-locked .src-input:disabled,
+body.params-locked input[type="number"]:disabled,
+body.params-locked input[type="checkbox"]:disabled { opacity: .6; cursor: not-allowed; }

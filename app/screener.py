@@ -82,6 +82,7 @@ class Screener:
         返回 {results, total, elapsed, universe_size, scanned, stats, sync_status}
         """
         t0 = time.time()
+        self._daily_chg = {}          # 日线最新涨跌幅缓存（跨级别共用，按需读取）
         timeframes = params.get("timeframes") or ["daily"]
         timeframes = [t for t in timeframes if t in config.TIMEFRAMES]
         if not timeframes:
@@ -347,6 +348,21 @@ class Screener:
             self.cache.set(code, tf, bars)
         return bars
 
+    def _daily_change(self, code: str) -> float:
+        """个股「最新交易日」涨跌幅（相对前一交易日），统一用日线口径。
+
+        周线/月线结果里的涨跌幅如果直接用当前级别算，会得到「本周涨 61%」这种
+        周期涨幅，与「今天涨了多少」不是一回事。这里始终取日线最后一根。
+        只对真正命中并进入结果的股票调用，带缓存避免重复读盘。
+        """
+        cache = getattr(self, "_daily_chg", None)
+        if cache is None:
+            cache = self._daily_chg = {}
+        if code not in cache:
+            db = self._get_bars(code, "daily")
+            cache[code] = change_pct(db, len(db) - 1) if db and len(db) >= 2 else 0.0
+        return cache[code]
+
     def _build_row(self, code, name, tf, m: PatternMatch, bars: List[Candle],
                    close: float, params: dict, limit_1y: int = 0, ytd: float = 0.0) -> Optional[ScanResult]:
         """套用附加过滤条件，通过则返回 ScanResult。"""
@@ -380,9 +396,12 @@ class Screener:
         if change_max is not None and chg > change_max:
             return None
 
-        # 最新交易日涨跌幅（相对前一交易日收盘），结果表展示用
+        # 涨跌幅拆成两列：
+        #   latest_chg → 个股最新交易日涨跌幅（固定日线口径，与级别无关）
+        #   tf_chg     → 当前级别的周期涨跌幅（周线=本周、月线=本月）
         last_i = len(bars) - 1
-        latest_chg = change_pct(bars, last_i) if last_i > 0 else chg
+        tf_chg = change_pct(bars, last_i) if last_i > 0 else chg
+        latest_chg = self._daily_change(code) if tf != "daily" else tf_chg
 
         # 相对位置字段已废弃（「相对位置」筛选条件与展示列均已移除），
         # 不再做 O(60) 的支撑阻力计算，仅保留占位，避免无谓开销拖慢全市场扫描
@@ -411,6 +430,7 @@ class Screener:
             volume_ratio=vr,
             volume_ratio_prev=round(vr_prev, 2),
             latest_change_pct=round(latest_chg, 2),
+            tf_change_pct=round(tf_chg, 2),
             close=price,
             change_pct=round(chg, 2),
             position=-1.0,

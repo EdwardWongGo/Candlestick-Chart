@@ -112,7 +112,8 @@ class ScanResult:
     strength: float = 0.0    # 加权后信号强度 0-100
     volume_ratio: float = 1.0  # 量能水平 = 成交量 / 前 20 根均量
     volume_ratio_prev: float = 1.0  # 较前量 = 成交量 / 前一根成交量（「放量倍数」筛选口径）
-    latest_change_pct: float = 0.0  # 最新交易日涨跌幅%（相对前一日收盘）
+    latest_change_pct: float = 0.0  # 最新交易日涨跌幅%（固定日线口径，与所选级别无关）
+    tf_change_pct: float = 0.0      # 所选级别的周期涨跌幅%（周线=本周、月线=本月）
     close: float = 0.0       # 现价/收盘价
     change_pct: float = 0.0  # 涨跌幅
     position: float = -1.0   # 相对位置 0(支撑)~1(阻力)
@@ -142,6 +143,7 @@ class ScanResult:
             "volume_ratio": round(self.volume_ratio, 2),
             "volume_ratio_prev": round(self.volume_ratio_prev, 2),
             "latest_change_pct": round(self.latest_change_pct, 2),
+            "tf_change_pct": round(self.tf_change_pct, 2),
             "close": self.close,
             "change_pct": round(self.change_pct, 2),
             "position": round(self.position, 3),

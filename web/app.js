@@ -245,17 +245,32 @@ function bindEvents() {
 function renderTimeframes() {
   const box = document.getElementById('timeframeChips');
   box.innerHTML = '';
-  state.meta.timeframes.forEach((tf, i) => {
+  state.meta.timeframes.forEach((tf) => {
     const chip = document.createElement('div');
-    chip.className = 'chip' + (i === 0 ? ' active' : '');
+    chip.className = 'chip active';        // 默认全选（日/周/月）
     chip.dataset.key = tf.key;
     chip.textContent = tf.zh;
     chip.addEventListener('click', () => {
-      if (chip.classList.contains('locked')) return;  // 锁定条件不可切换
+      if (chip.classList.contains('locked')) return;  // 历史结果锁定的条件不可切换
+      // 至少保留一个级别：取消最后一个时不生效
+      if (chip.classList.contains('active')
+          && box.querySelectorAll('.chip.active').length <= 1) {
+        denyChip(chip, '至少要选一个时间级别');
+        return;
+      }
       chip.classList.toggle('active');
     });
     box.appendChild(chip);
   });
+}
+
+// 不允许取消最后一个选项时给个短暂反馈，而不是静默无反应
+function denyChip(chip, msg) {
+  chip.classList.remove('chip-flash');
+  void chip.offsetWidth;          // 重启动画
+  chip.classList.add('chip-flash');
+  chip.title = msg;
+  setTimeout(() => chip.classList.remove('chip-flash'), 400);
 }
 
 function renderMarkets() {
@@ -263,11 +278,17 @@ function renderMarkets() {
   box.innerHTML = '';
   (state.meta.markets || []).forEach((m) => {
     const chip = document.createElement('div');
-    chip.className = 'chip';   // 默认不选中 = 不限
+    chip.className = 'chip active';   // 默认全选（等价于不限板块）
     chip.dataset.key = m.key;
     chip.textContent = m.zh;
     chip.addEventListener('click', () => {
-      if (chip.classList.contains('locked')) return;  // 锁定条件不可切换
+      if (chip.classList.contains('locked')) return;  // 历史结果锁定的条件不可切换
+      // 至少保留一个板块
+      if (chip.classList.contains('active')
+          && box.querySelectorAll('.chip.active').length <= 1) {
+        denyChip(chip, '至少要选一个市场板块');
+        return;
+      }
       chip.classList.toggle('active');
     });
     box.appendChild(chip);
@@ -487,19 +508,20 @@ function applyPatternLock() {
     const cb = item.querySelector('.pat-main input[data-key]');
     if (!cb) return;
     const key = cb.dataset.key;
-    const locked = (state.lockedPatterns || new Set()).has(key);
-    if (locked) cb.checked = true;      // 锁定项强制勾选（反映历史结果）
-    cb.disabled = locked;
-    item.classList.toggle('locked', locked);
+    // 历史里选过的形态才允许操作；没选过的置灰（二次筛选只能在原范围内调整）
+    const allowed = (state.lockedPatterns || new Set()).has(key);
+    if (allowed) cb.checked = true;      // 反映历史勾选状态
+    cb.disabled = !allowed;
+    item.classList.toggle('locked', !allowed);
     const verify = item.querySelector('.verify-on[data-key]');
     if (verify) {
-      verify.disabled = locked;
-      if (locked) verify.checked = (state.lockedVerify || new Set()).has(key);
+      verify.disabled = !allowed;
+      if (allowed) verify.checked = (state.lockedVerify || new Set()).has(key);
     }
     const n = item.querySelector('.pat-n[data-key]');
     if (n) {
-      n.disabled = locked;
-      if (locked && state.lockedPatternParams && state.lockedPatternParams[key]) {
+      n.disabled = !allowed;
+      if (allowed && state.lockedPatternParams && state.lockedPatternParams[key]) {
         n.value = state.lockedPatternParams[key].N;
       }
     }
@@ -521,6 +543,108 @@ function unlockPatterns() {
   // 解锁后按当前形态勾选状态恢复各验证项的可用性（未勾选的仍保持置灰）
   syncAllVerify();
   if (_updateDirectionExclusion) _updateDirectionExclusion();
+}
+
+// 历史结果只读：把该次筛选的全部条件回填到界面并置灰（时间级别/板块/形态/各数值）
+// 形态部分由 applyPatternLock 处理，这里负责 chips 与数值/开关类条件
+const LOCK_NUM_FIELDS = [
+  ['volume_min', 'volumeMin'], ['price_min', 'priceMin'], ['price_max', 'priceMax'],
+  ['change_min', 'changeMin'], ['change_max', 'changeMax'],
+  ['market_cap_min', 'marketCapMin'], ['market_cap_max', 'marketCapMax'],
+  ['float_mcap_min', 'floatMcapMin'], ['float_mcap_max', 'floatMcapMax'],
+  ['limit_up_count_min', 'limitUpCountMin'],
+];
+const LOCK_BOOL_FIELDS = [
+  ['above_ma250', 'aboveMa250'], ['exclude_st', 'excludeSt'],
+];
+
+function lockAllParams(hp) {
+  hp = hp || {};
+  // 时间级别：历史选了哪些就点亮哪些，并全部锁死
+  const tfBox = document.getElementById('timeframeChips');
+  if (tfBox) {
+    const want = new Set(Array.isArray(hp.timeframes) ? hp.timeframes : []);
+    tfBox.querySelectorAll('.chip').forEach((chip) => {
+      if (!want.size) return;   // 历史无记录 → 不限制
+      const allowed = want.has(chip.dataset.key);
+      chip.classList.toggle('active', allowed);
+      chip.classList.toggle('locked', !allowed);   // 只锁没选过的
+    });
+  }
+  // 市场板块：历史为 null/空 = 不限 → 视为全选
+  const mkBox = document.getElementById('marketChips');
+  if (mkBox) {
+    const want = new Set(Array.isArray(hp.markets) ? hp.markets : []);
+    mkBox.querySelectorAll('.chip').forEach((chip) => {
+      const allowed = want.size ? want.has(chip.dataset.key) : true;   // 历史为「不限」= 全部可选
+      chip.classList.toggle('active', allowed);
+      chip.classList.toggle('locked', !allowed);
+    });
+  }
+  // 数值条件：回填 + 禁用
+  LOCK_NUM_FIELDS.forEach(([k, id]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const hasVal = hp[k] !== null && hp[k] !== undefined && hp[k] !== '';
+    el.value = hasVal ? hp[k] : '';
+    el.disabled = hasVal;      // 只有原来生效的条件才锁定，空条件留给人追加
+  });
+  // 开关类条件
+  LOCK_BOOL_FIELDS.forEach(([k, id]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const on = !!hp[k];
+    el.checked = on;
+    el.disabled = on;          // 原来勾上的锁住，没勾的允许追加
+  });
+  document.body.classList.add('params-locked');
+}
+
+// 解除只读：所有条件恢复可编辑（数值保留，方便在此基础上微调）
+function unlockAllParams() {
+  document.querySelectorAll('#timeframeChips .chip.locked, #marketChips .chip.locked')
+    .forEach((chip) => chip.classList.remove('locked'));
+  LOCK_NUM_FIELDS.forEach(([, id]) => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = false;
+  });
+  LOCK_BOOL_FIELDS.forEach(([, id]) => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = false;
+  });
+  document.body.classList.remove('params-locked');
+  unlockPatterns();
+}
+
+// 点「返回」/清空结果时，把筛选条件恢复成默认状态（而不是保留上一次的选择）
+function resetFilterParams() {
+  // 时间级别、市场板块：默认全选
+  document.querySelectorAll('#timeframeChips .chip, #marketChips .chip').forEach((chip) => {
+    chip.classList.add('active');
+    chip.classList.remove('locked');
+  });
+  // 形态：全部取消勾选、解除置灰
+  document.querySelectorAll('#patternList .pattern-item').forEach((item) => {
+    item.classList.remove('locked');
+    const cb = item.querySelector('.pat-main input');
+    if (cb) { cb.checked = false; cb.disabled = false; }
+    const verify = item.querySelector('.verify-on');
+    if (verify) { verify.checked = false; verify.disabled = false; }
+    const n = item.querySelector('.pat-n');
+    if (n) { n.disabled = false; }
+  });
+  // 数值条件：清空
+  LOCK_NUM_FIELDS.forEach(([, id]) => {
+    const el = document.getElementById(id);
+    if (el) { el.value = ''; el.disabled = false; }
+  });
+  // 开关类：回到默认（剔除ST默认勾，年线默认不勾）
+  const st = document.getElementById('excludeSt');
+  if (st) { st.checked = true; st.disabled = false; }
+  const ma = document.getElementById('aboveMa250');
+  if (ma) { ma.checked = false; ma.disabled = false; }
+  document.body.classList.remove('params-locked');
+  if (typeof syncAllVerify === 'function') syncAllVerify();
 }
 
 function setupPatternDirToggle() {
@@ -921,7 +1045,8 @@ function clearResult() {
   state.viewingHistory = null;
   state.historyPool = null;    // 离开历史视图 → 二次筛选池清除，回到全市场
   state.page = 1;
-  unlockPatterns();            // 离开历史视图，解除形态锁定、恢复方向单选
+  unlockAllParams();           // 先解除历史锁定
+  resetFilterParams();         // 再把筛选条件恢复默认（全选级别/板块、清空形态与数值）
   setDataSourceVisible(true);  // 离开历史视图，恢复显示「数据来源」选择项
   document.querySelectorAll('.history-item.selected').forEach((el) => el.classList.remove('selected'));
   renderResults();
@@ -1271,6 +1396,7 @@ async function loadHistoryItem(id) {
     state.lockedVerify = new Set(Array.isArray(hp.verify_patterns) ? hp.verify_patterns : []);
     state.lockedPatternParams = (hp.pattern_params && typeof hp.pattern_params === 'object') ? hp.pattern_params : {};
     applyPatternLock();
+    lockAllParams(hp);   // 时间级别/板块/放量/价格/市值/年线/ST 一并回填并置灰
     // 高亮选中的历史记录项（标识当前操作对象）
     document.querySelectorAll('.history-item').forEach((el) => {
       el.classList.toggle('selected', el.dataset.id === id);
@@ -1313,6 +1439,7 @@ function renderResults() {
     pattern: (r) => r.pattern_zh,
     strength: (r) => r.strength,
     latest_change_pct: (r) => r.latest_change_pct ?? 0,
+    tf_change_pct: (r) => r.tf_change_pct ?? 0,
     volume_ratio_prev: (r) => r.volume_ratio_prev ?? r.volume_ratio,
     close: (r) => r.close,
     market_cap: (r) => r.market_cap || 0,
@@ -1386,6 +1513,7 @@ function renderResults() {
       <td><span class="tag tag-tf">${r.timeframe_zh}</span></td>
       <td>${r.pattern_zh}</td>
       <td class="${(r.latest_change_pct ?? 0) >= 0 ? 'num-up' : 'num-down'}">${(r.latest_change_pct >= 0 ? '+' : '')}${(r.latest_change_pct ?? 0).toFixed(2)}%</td>
+      <td class="${(r.tf_change_pct ?? 0) >= 0 ? 'num-up' : 'num-down'}">${(r.tf_change_pct >= 0 ? '+' : '')}${(r.tf_change_pct ?? 0).toFixed(2)}%</td>
       <td>${(r.volume_ratio_prev ?? r.volume_ratio)}×</td>
       <td>${r.close.toFixed(2)}</td>
       <td>${fmtCap(r.market_cap)}</td>
@@ -1476,7 +1604,7 @@ function renderGroupedResults(list, get) {
         <td class="cell-code">${r.code}</td><td>${r.name}</td>
         <td><span class="tag tag-tf">${r.market_zh || '—'}</span></td>
         <td><span class="tag tag-tf">${r.timeframe_zh}</span></td>
-        <td>${r.pattern_zh}</td><td class="${(r.latest_change_pct ?? 0) >= 0 ? 'num-up' : 'num-down'}">${(r.latest_change_pct >= 0 ? '+' : '')}${(r.latest_change_pct ?? 0).toFixed(2)}%</td>
+        <td>${r.pattern_zh}</td><td class="${(r.latest_change_pct ?? 0) >= 0 ? 'num-up' : 'num-down'}">${(r.latest_change_pct >= 0 ? '+' : '')}${(r.latest_change_pct ?? 0).toFixed(2)}%</td><td class="${(r.tf_change_pct ?? 0) >= 0 ? 'num-up' : 'num-down'}">${(r.tf_change_pct >= 0 ? '+' : '')}${(r.tf_change_pct ?? 0).toFixed(2)}%</td>
         <td>${(r.volume_ratio_prev ?? r.volume_ratio)}×</td><td>${r.close.toFixed(2)}</td>
         <td>${fmtCap(r.market_cap)}</td><td>${fmtCap(r.float_mcap)}</td>
         <td class="${ytdCls(r.ytd_change)}">${fmtYtd(r.ytd_change)}</td>
@@ -1487,7 +1615,7 @@ function renderGroupedResults(list, get) {
       <td class="cell-code">${best.code}</td><td>${best.name}</td>
       <td><span class="tag tag-tf">${best.market_zh || '—'}</span></td>
       <td><span class="tag tag-tf tag-group">${tfsZh}</span></td>
-      <td>${patterns}</td><td class="${(best.latest_change_pct ?? 0) >= 0 ? 'num-up' : 'num-down'}">${(best.latest_change_pct >= 0 ? '+' : '')}${(best.latest_change_pct ?? 0).toFixed(2)}%</td>
+      <td>${patterns}</td><td class="${(best.latest_change_pct ?? 0) >= 0 ? 'num-up' : 'num-down'}">${(best.latest_change_pct >= 0 ? '+' : '')}${(best.latest_change_pct ?? 0).toFixed(2)}%</td><td class="${(best.tf_change_pct ?? 0) >= 0 ? 'num-up' : 'num-down'}">${(best.tf_change_pct >= 0 ? '+' : '')}${(best.tf_change_pct ?? 0).toFixed(2)}%</td>
       <td>${maxVol}×</td><td>${best.close.toFixed(2)}</td>
       <td>${fmtCap(best.market_cap)}</td><td>${fmtCap(best.float_mcap)}</td>
       <td class="${ytdCls(best.ytd_change)}">${fmtYtd(best.ytd_change)}</td>
@@ -2796,7 +2924,7 @@ function generateReport() {
   const rows = all.map((r) => `
     <tr>
       <td>${r.code}</td><td>${r.name}</td><td>${r.market_zh}</td><td>${r.timeframe_zh}</td>
-      <td>${r.pattern_zh}</td><td>${(r.latest_change_pct >= 0 ? '+' : '')}${(r.latest_change_pct ?? 0).toFixed(2)}%</td><td>${(r.volume_ratio_prev ?? r.volume_ratio)}×</td>
+      <td>${r.pattern_zh}</td><td>${(r.latest_change_pct >= 0 ? '+' : '')}${(r.latest_change_pct ?? 0).toFixed(2)}%</td><td>${(r.tf_change_pct >= 0 ? '+' : '')}${(r.tf_change_pct ?? 0).toFixed(2)}%</td><td>${(r.volume_ratio_prev ?? r.volume_ratio)}×</td>
       <td>${r.resonance ? '✓' : ''}</td>
     </tr>`).join('');
 
@@ -2829,7 +2957,7 @@ function generateReport() {
   </div>
   <h2>全部信号（${all.length} 条，按最新涨跌幅排序）</h2>
   <table><thead><tr>
-    <th>代码</th><th>名称</th><th>板块</th><th>级别</th><th>形态</th><th>涨跌幅</th><th>较前量</th><th>共振</th>
+    <th>代码</th><th>名称</th><th>板块</th><th>级别</th><th>形态</th><th>涨跌幅</th><th>级别涨跌幅</th><th>较前量</th><th>共振</th>
   </tr></thead><tbody>${rows}</tbody></table>
   ${resonanceStocks.length ? `<h2>跨级别共振股票（${resonanceStocks.length} 只）</h2><div>${resonanceStocks.map((s) => `<span class="tag">${s}</span>`).join('')}</div>` : ''}
   <div class="disclaimer">本报告由 A股量化分析工具自动生成，仅用于技术形态学习与研究，不构成任何投资建议。股市有风险，投资需谨慎。</div>

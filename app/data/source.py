@@ -52,6 +52,11 @@ def _throttle():
         time.sleep(min(max(wait, 0.01), 2.0))
 
 
+# 行情快照内存缓存：{code: (时间戳, 快照dict)}，筛选连续执行时复用，避免重复请求腾讯
+_QUOTE_MEM: dict = {}
+_QUOTE_MEM_TTL = 600.0        # 10 分钟
+
+
 def request_stats() -> dict:
     """当前请求速率（供调试/状态展示）。"""
     with _req_lock:
@@ -291,14 +296,33 @@ class TencentQuoteSource(DataSource):
 
 
     def batch_quotes(self, codes: List[str]) -> dict:
-        """批量拉取行情快照（每批最多 60 只），返回 {code: {name, price, change_pct}}。"""
+        """批量拉取行情快照（每批最多 60 只，多批并发 + 内存缓存）。
+
+        筛选结果的市值列依赖这里。命中股票多时（三级别全市场命中上万条，
+        去重后 4000+ 只）串行请求要 70 批、二十多秒，是筛选耗时的主要来源：
+        - 8 线程并发拉批次（仍受全局 _throttle 限速保护）
+        - 同一只股票 10 分钟内复用，连续筛选几乎不用再请求
+        """
         import urllib.request
-        result = {}
+        from concurrent.futures import ThreadPoolExecutor
+
         codes = [str(c).zfill(6) for c in codes]
-        for start in range(0, len(codes), 60):
-            chunk = codes[start:start + 60]
+        result = {}
+        now = time.time()
+        todo = []
+        for c in codes:
+            ent = _QUOTE_MEM.get(c)
+            if ent and now - ent[0] < _QUOTE_MEM_TTL:
+                result[c] = ent[1]
+            else:
+                todo.append(c)
+        if not todo:
+            return result
+
+        def _fetch(chunk):
             prefixed = [_market_prefix(c) + c for c in chunk]
             url = "https://qt.gtimg.cn/q=" + ",".join(prefixed)
+            got = {}
             try:
                 req = urllib.request.Request(url)
                 req.add_header("User-Agent", "Mozilla/5.0")
@@ -306,7 +330,7 @@ class TencentQuoteSource(DataSource):
                 resp = urllib.request.urlopen(req, timeout=10)
                 data = resp.read().decode("gbk", errors="ignore")
             except Exception:
-                continue
+                return got
             for line in data.strip().split(";"):
                 if not line.strip() or "=" not in line or '"' not in line:
                     continue
@@ -322,13 +346,21 @@ class TencentQuoteSource(DataSource):
                     except (ValueError, TypeError):
                         return default
 
-                result[code] = {
+                got[code] = {
                     "name": vals[1],
                     "price": _f(vals[3]),
                     "change_pct": _f(vals[32]),
                     "market_cap": _f(vals[45]),    # 总市值（亿）
                     "float_mcap": _f(vals[44]),    # 流通市值（亿）
                 }
+            return got
+
+        chunks = [todo[i:i + 60] for i in range(0, len(todo), 60)]
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for part in ex.map(_fetch, chunks):
+                for k, v in part.items():
+                    result[k] = v
+                    _QUOTE_MEM[k] = (now, v)
         return result
 
 
