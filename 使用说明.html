@@ -41,6 +41,17 @@
   details { border: 1px solid #e3e8ef; border-radius: 8px; padding: 10px 14px; margin-bottom: 10px; background: #fafbfd; }
   summary { cursor: pointer; font-weight: 600; color: #1f2d4a; }
   .foot { text-align: center; color: #8b96a8; font-size: 12px; margin-top: 28px; }
+  /* WorkBuddy 排查流程 */
+  .card h3 { font-size: 14.5px; color: #2b4a7a; margin: 16px 0 6px; }
+  .flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; margin: 14px 0 6px; }
+  .fstep { flex: 1; min-width: 148px; background: #f4f7fc; border: 1px solid #d8e0ec;
+    border-radius: 8px; padding: 10px 12px; text-align: center; font-size: 13px; }
+  .fstep b { display: block; color: #1f2d4a; font-size: 13.5px; }
+  .fstep span { color: #6b7a90; font-size: 12px; }
+  .arrow { align-self: center; color: #9fb0c9; font-weight: 700; }
+  .prompt { background: #f7f9fc; border: 1px dashed #b9c8dd; border-radius: 8px;
+    padding: 12px 14px; margin: 8px 0; white-space: pre-wrap; font-size: 13px;
+    color: #24384f; line-height: 1.65; }
 </style>
 </head>
 <body>
@@ -194,9 +205,78 @@
   </details>
 </div>
 
+<!-- ========== WorkBuddy 自助排查 ========== -->
+<div class="card">
+  <h2>六、启动失败？用 WorkBuddy 自助排查</h2>
+  <p>双击启动没反应、浏览器打不开、页面报错——不用等人。把项目文件夹交给 <b>WorkBuddy</b>（桌面 AI 助手），
+     让它读日志、查端口、查依赖，通常一两分钟就能定位原因并直接修好。</p>
+
+  <div class="flow">
+    <div class="fstep"><b>① 出现故障</b><span>启动失败 / 页面打不开</span></div>
+    <div class="arrow">→</div>
+    <div class="fstep"><b>② 打开 WorkBuddy</b><span>把项目文件夹给它</span></div>
+    <div class="arrow">→</div>
+    <div class="fstep"><b>③ 粘贴提示词</b><span>描述现象 + 让它逐项查</span></div>
+    <div class="arrow">→</div>
+    <div class="fstep"><b>④ 按结论操作</b><span>重启服务 + 刷新页面</span></div>
+  </div>
+
+  <h3>第 1 步：把项目文件夹交给它</h3>
+  <ol class="steps">
+    <li>打开 WorkBuddy，新建一个会话。</li>
+    <li>把项目文件夹（包含 <code>run.py</code>、<code>启动筛选工具.bat</code> 的那一层）<b>拖进对话框</b>，
+        或在它的工作目录里指向该文件夹。</li>
+    <li>测试是否接好：问一句「当前目录有哪些文件」，能列出来就说明可以正常读写。</li>
+  </ol>
+  <div class="tip">💡 它是本机 AI 助手，可以直接读文件、执行命令。所以这不是“猜原因”，
+    而是真的去读你的日志、查你的端口、看你的进程。</div>
+
+  <h3>第 2 步：直接粘贴这段提示词</h3>
+  <div class="prompt">项目目录：D://量化开发//蜡烛图（换成你电脑上的实际路径）
+
+现象：双击「启动筛选工具.bat」后，浏览器打开 http://127.0.0.1:8000 显示「无法访问此网站」。
+
+请按这个顺序排查，每一步把结果告诉我，最后直接修好：
+1. 读 启动日志.log 和 服务日志.log 的最后 50 行，找出报错信息
+2. 查 8000 端口有没有被别的程序占用
+3. 检查 .venv 是否存在、依赖是否齐（flask / pandas / mootdx 能否 import）
+4. 查有没有卡死的 pythonw.exe 残留进程
+5. 定位原因后直接改，改完告诉我怎么验证、要不要重启服务
+
+注意：只做诊断和修复，不要批量拉取行情数据。</div>
+
+  <h3>第 3 步：按症状选一行（可以接着追加上面的提示词）</h3>
+  <table>
+    <tr><th>你看到的现象</th><th>让它查什么</th><th>通常是</th></tr>
+    <tr><td>双击 .bat，窗口一闪就消失</td><td>读 <code>启动日志.log</code></td><td>依赖没装好、Python 路径不对</td></tr>
+    <tr><td>浏览器「无法访问此网站」</td><td>查 8000 端口 / <code>pythonw.exe</code> 进程</td><td>服务没起来，或端口被别的程序占了</td></tr>
+    <tr><td>页面能打开，但筛选结果为空</td><td>看 <code>data/daily</code> 里有没有 CSV</td><td>还没同步数据</td></tr>
+    <tr><td>同步进度卡住 / 一直失败</td><td>读 <code>服务日志.log</code> 的报错</td><td>数据源被限流，换个服务器再试</td></tr>
+    <tr><td>页面样式错乱、没有新功能</td><td>确认服务是否跑的是最新代码</td><td>旧进程没重启，或浏览器缓存了旧页面</td></tr>
+    <tr><td>报告里行业/题材是空的</td><td>看 <code>data/industry.json</code>、<code>concepts.json</code></td><td>本次筛选结果没带画像字段，重新筛选一次</td></tr>
+  </table>
+
+  <h3>第 4 步：它给出结论后，你只需要两件事</h3>
+  <ol class="steps">
+    <li><b>重启服务</b>：双击 <code>停止筛选工具.bat</code>，再双击 <code>启动筛选工具.bat</code>。
+      <br>（后端代码改动必须重启才生效，只刷新页面没用。）</li>
+    <li><b>刷新页面</b>：浏览器按 <code>Ctrl + F5</code> 强制刷新，清掉旧的前端缓存。</li>
+  </ol>
+
+  <div class="warn">⚠️ 三件不要让它做的事：
+    <br>· <b>不要批量重拉全市场数据</b>——一次几万请求会触发数据源风控，连通达信 K 线接口都可能被限好几天。诊断只打单只样本。
+    <br>· <b>不要删 <code>data</code> 目录</b>——那是几个小时的同步成果，删了要重新同步。
+    <br>· <b>不要让它后台闷头跑长任务</b>——同步前先估算耗时，确认能中断再开始。</div>
+
+  <div class="tip">💡 如果 WorkBuddy 也修不好，把这三样发给维护者，定位会快很多：
+    <br>① <code>启动日志.log</code> 与 <code>服务日志.log</code>
+    <br>② 命令行执行 <code>python run.py</code> 后的完整红色报错
+    <br>③ Windows 版本 + <code>python --version</code> 的输出</div>
+</div>
+
 <!-- ========== 数据位置 ========== -->
 <div class="card">
-  <h2>六、数据存在哪里</h2>
+  <h2>七、数据存在哪里</h2>
   <table>
     <tr><th>内容</th><th>位置</th></tr>
     <tr><td>日线 K 线</td><td>项目目录 <code>data/daily/</code>（每个股票一个 CSV）</td></tr>
