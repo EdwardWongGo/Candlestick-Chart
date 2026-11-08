@@ -455,6 +455,36 @@ def sync_now():
 
 
 # ---------------------------------------------------------------------------
+# 个股概念（题材板块）
+# ---------------------------------------------------------------------------
+@app.route("/api/concepts")
+def api_concepts():
+    """返回指定股票的概念标签 {map: {code: [概念]}, info: {cached, stocks}}。
+
+    首次调用会全量构建（约 531 个概念板块的反向索引，15 秒左右），
+    之后走 7 天本地缓存，立即返回。
+    """
+    raw = request.args.get("codes") or ""
+    codes = [c.strip() for c in raw.split(",") if c.strip()]
+    try:
+        from .concepts import concepts_of, cache_info
+        return jsonify({"map": concepts_of(codes) if codes else {}, "info": cache_info()})
+    except Exception as e:
+        return jsonify({"map": {}, "error": str(e)}), 500
+
+
+@app.route("/api/concepts/rebuild", methods=["POST"])
+def api_concepts_rebuild():
+    """强制重建概念索引（数据源更新后可手动刷新）。"""
+    try:
+        from .concepts import get_concept_map, cache_info
+        m = get_concept_map(force=True)
+        return jsonify({"ok": True, "stocks": len(m), "info": cache_info()})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
 # 个股研报
 # ---------------------------------------------------------------------------
 @app.route("/api/report/search")

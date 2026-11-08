@@ -270,6 +270,16 @@ class Screener:
                     if row is not None:
                         results.append(row)
 
+        # 4.0 行业归属：只查命中股票（7 天本地缓存），报告的行业占比依赖它
+        if results:
+            try:
+                from .industry import get_industries
+                ind_map = get_industries(list({r.code for r in results}))
+                for r in results:
+                    r.industry = ind_map.get(r.code, "")
+            except Exception:
+                pass
+
         # 4.1 市值（总市值/流通市值）：仅对命中股票批量拉快照，避免全市场逐只请求
         if results:
             hit_codes = list({r.code for r in results})

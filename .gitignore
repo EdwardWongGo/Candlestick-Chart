@@ -11,6 +11,7 @@ dist/
 output/
 data/*
 !data/README.md
+!data/themes.json
 启动日志.log
 服务日志.log
 *.csv

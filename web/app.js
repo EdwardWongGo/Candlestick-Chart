@@ -27,6 +27,7 @@ const API = {
   dragonTigerSeats: (code, date) => `/api/dragon-tiger/${code}${date ? '?date=' + date : ''}`,
   dragonTigerHistory: (code, days = 180) => `/api/dragon-tiger/history/${code}?days=${days}`,
   latestDate: '/api/latest-trade-date',
+  concepts: (codes) => `/api/concepts?codes=${encodeURIComponent(codes)}`,
   hotspot: (date) => `/api/hotspot${date ? '?date=' + date : ''}`,
   news: '/api/news',
   dailyNews: '/api/news/daily',
@@ -1458,6 +1459,9 @@ function renderResults() {
     return state.sortDesc ? sb.localeCompare(sa) : sa.localeCompare(sb);
   });
 
+  // 当前排序后的完整列表（供 K 线详情侧栏、上一只/下一只保持同一顺序）
+  state.sortedResults = list;
+
   // 按股票分组模式：同股多级别折叠为一行（级别聚合），点击展开各级别明细
   if (state.groupByStock) {
     renderGroupedResults(list, get);
@@ -1563,6 +1567,8 @@ function renderGroupedResults(list, get) {
     const sa = String(va), sb = String(vb);
     return state.sortDesc ? sb.localeCompare(sa) : sa.localeCompare(sb);
   });
+  // 分组模式下的展示顺序 = 组的顺序 + 组内级别顺序，K 线侧栏按这个顺序排
+  state.sortedResults = groupArr.flat();
 
   // 分页（按组数）
   const total = groupArr.length;
@@ -2910,59 +2916,507 @@ function drawIndexKline(el, d) {
 
 // ===================== 市场分析报告 =====================
 
+// ===================== 报告统计与图表（纯 SVG，无外部依赖，离线可看）=====================
+const REPORT_COLORS = ['#f23645', '#e8833a', '#d4a72c', '#4a9e5c', '#26a69a',
+  '#2f7ed8', '#5b6bd4', '#8e5bd4', '#c04a9e', '#7a8794'];
+
+// 汇总筛选结果：行业/形态/级别分布、涨跌与量能概况
+function reportStats() {
+  const rows = state.results || [];
+  const stockMap = new Map();
+  const indMap = new Map();
+  const patMap = new Map();
+  const tfMap = { '日线': 0, '周线': 0, '月线': 0 };
+  let chgSum = 0, chgCnt = 0, volSum = 0, volCnt = 0, up = 0, down = 0;
+
+  for (const r of rows) {
+    if (!r || !r.code) continue;
+    if (!stockMap.has(r.code)) stockMap.set(r.code, []);
+    stockMap.get(r.code).push(r);
+
+    const ind = r.industry || '未分类';
+    indMap.set(ind, (indMap.get(ind) || 0) + 1);
+    patMap.set(r.pattern_zh, (patMap.get(r.pattern_zh) || 0) + 1);
+    if (tfMap[r.timeframe_zh] !== undefined) tfMap[r.timeframe_zh] += 1;
+
+    if (typeof r.latest_change_pct === 'number') {
+      chgSum += r.latest_change_pct; chgCnt += 1;
+      if (r.latest_change_pct >= 0) up += 1; else down += 1;
+    }
+    const v = (r.volume_ratio_prev !== undefined && r.volume_ratio_prev !== null)
+      ? r.volume_ratio_prev : r.volume_ratio;
+    if (typeof v === 'number') { volSum += v; volCnt += 1; }
+  }
+
+  const industries = [...indMap.entries()].map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value);
+  const patterns = [...patMap.entries()].map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value);
+  const resonance = [...stockMap.values()].filter((g) => g.some((r) => r.resonance)).length;
+
+  return {
+    total: rows.length,
+    stocks: stockMap.size,
+    industries, patterns, tfMap, resonance,
+    avgChg: chgCnt ? chgSum / chgCnt : 0,
+    avgVol: volCnt ? volSum / volCnt : 0,
+    up, down,
+    upRatio: chgCnt ? up / chgCnt : 0,
+    topInd: industries[0] || null,
+    topIndRatio: industries.length && rows.length ? industries[0].value / rows.length : 0,
+  };
+}
+
+// 树状图：面积 = 信号条数。二分切分（交替横竖），块越大代表该行业信号越多
+function svgTreemap(items, W, H, maxCells = 12) {
+  // 只画 Top N，不聚合「其他」—— 长尾聚起来往往占掉 80%+ 面积，
+  // 真正靠前的题材会被压成细条看不见（用户反馈过这个问题）
+  const top = items.slice(0, maxCells);
+  if (!top.length) return '';
+  const total = top.reduce((s, i) => s + i.value, 0) || 1;
+  const rects = [];
+  const layout = (arr, x, y, w, h, vertical) => {
+    if (!arr.length) return;
+    if (arr.length === 1) { rects.push({ ...arr[0], x, y, w, h }); return; }
+    const sum = arr.reduce((s, i) => s + i.value, 0) || 1;
+    let acc = 0, idx = 1;
+    for (let i = 0; i < arr.length; i++) {
+      acc += arr[i].value;
+      if (acc >= sum / 2) { idx = i + 1; break; }
+    }
+    idx = Math.min(Math.max(idx, 1), arr.length - 1);
+    const a = arr.slice(0, idx), b = arr.slice(idx);
+    const ratio = a.reduce((s, i) => s + i.value, 0) / sum;
+    if (vertical) {
+      layout(a, x, y, w * ratio, h, !vertical);
+      layout(b, x + w * ratio, y, w * (1 - ratio), h, !vertical);
+    } else {
+      layout(a, x, y, w, h * ratio, !vertical);
+      layout(b, x, y + h * ratio, w, h * (1 - ratio), !vertical);
+    }
+  };
+  layout(top, 0, 0, W, H, W >= H);
+
+  const cells = rects.map((r, i) => {
+    const color = r.other ? '#b8bcc4' : REPORT_COLORS[i % REPORT_COLORS.length];
+    const pct = (r.value / total * 100).toFixed(1);
+    const showLabel = r.w > 62 && r.h > 30;
+    const showPct = r.w > 62 && r.h > 46;
+    return `<g><title>${r.name}：${r.value} 条（${pct}%）</title>`
+      + `<rect x="${r.x}" y="${r.y}" width="${Math.max(0, r.w - 2)}" height="${Math.max(0, r.h - 2)}" rx="3" fill="${color}" opacity="0.93"/>`
+      + (showLabel ? `<text x="${r.x + 7}" y="${r.y + 17}" font-size="11.5" fill="#fff" font-weight="600">${r.name}</text>` : '')
+      + (showPct ? `<text x="${r.x + 7}" y="${r.y + 32}" font-size="10.5" fill="#fff" opacity="0.88">${r.value} 条 · ${pct}%</text>` : '')
+      + `</g>`;
+  }).join('');
+
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;height:auto;display:block;border-radius:6px">${cells}</svg>`;
+}
+
+// 环形占比图：Top 8 行业 + 其他
+function svgDonut(items, size = 190, maxSlices = 8) {
+  // 同上：只展示 Top N，不把长尾塞成「其他」，否则整块占比失真
+  const top = items.slice(0, maxSlices);
+  if (!top.length) return '';
+  const total = top.reduce((s, i) => s + i.value, 0) || 1;
+  const R = 68, SW = 26, cx = size / 2, cy = size / 2;
+  const circ = 2 * Math.PI * R;
+  let offset = 0;
+  const arcs = top.map((it, i) => {
+    const len = it.value / total * circ;
+    const color = it.other ? '#b8bcc4' : REPORT_COLORS[i % REPORT_COLORS.length];
+    const seg = `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${color}" stroke-width="${SW}"
+      stroke-dasharray="${len} ${circ - len}" stroke-dashoffset="${-offset}"
+      transform="rotate(-90 ${cx} ${cy})"><title>${it.name}：${it.value} 条</title></circle>`;
+    offset += len;
+    return seg;
+  }).join('');
+  const legend = top.map((it, i) => {
+    const color = it.other ? '#b8bcc4' : REPORT_COLORS[i % REPORT_COLORS.length];
+    return `<div style="display:flex;align-items:center;gap:6px;font-size:12px;margin:4px 0">
+      <span style="width:10px;height:10px;border-radius:2px;background:${color};flex:0 0 auto"></span>
+      <span style="min-width:86px">${it.name}</span>
+      <span style="color:#888">${it.value} 条 · ${(it.value / total * 100).toFixed(1)}%</span></div>`;
+  }).join('');
+  return `<div style="display:flex;gap:22px;align-items:center;flex-wrap:wrap">
+    <svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" style="flex:0 0 auto">
+      ${arcs}
+      <text x="${cx}" y="${cy - 2}" text-anchor="middle" font-size="21" font-weight="700" fill="#1a1a1a">${total}</text>
+      <text x="${cx}" y="${cy + 15}" text-anchor="middle" font-size="11" fill="#8a8f99">条信号</text>
+    </svg>
+    <div>${legend}</div></div>`;
+}
+
+// 横向柱状图：长度按最大值归一化（看得清相对高低），占比按全量算（反映真实份额）
+// 横向柱状图：长度按最大值归一化，占比按全量算（真实份额）
+// maxRows<=0 列全部；kind 用于区分行业/题材的成员数据（点击展开时按 kind+name 取）
+function svgBars(items, maxRows = 10, labelWidth = 96, showPct = false, detailFn = null, kind = '') {
+  const top = maxRows > 0 ? items.slice(0, maxRows) : items;
+  if (!top.length) return '';
+  const max = Math.max(...top.map((i) => i.value)) || 1;
+  const totalAll = items.reduce((s, i) => s + i.value, 0) || 1;
+  return top.map((it, i) => {
+    const w = Math.max(1.5, (it.value / max) * 100);
+    const pct = showPct
+      ? ` <span class="b-pct">${(it.value / totalAll * 100).toFixed(1)}%</span>` : '';
+    const color = REPORT_COLORS[i % REPORT_COLORS.length];
+    const inner = `<span class="b-label" style="width:${labelWidth}px">${i + 1}. ${it.name}</span>
+      <span class="b-track"><span class="b-fill" style="width:${w}%;background:${color}"></span></span>
+      <span class="b-val">${it.value} 条${pct}</span>`;
+    if (!detailFn) return `<div class="bar-row">${inner}</div>`;
+    return `<details class="bar-item" data-kind="${kind}" data-name="${it.name}">
+      <summary>${inner}<span class="bar-caret">▸</span></summary>
+      <div class="m-slot"></div>
+    </details>`;
+  }).join('');
+}
+
+// 把结果按「行业」或「概念」分组 → { 名称: [信号行] }，用于柱状图点击展开
+function groupMembers(rows, keyFn) {
+  const m = new Map();
+  for (const r of rows) {
+    for (const k of (keyFn(r) || [])) {
+      if (!k) continue;
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(r);
+    }
+  }
+  return m;
+}
+
+// 成员数据压成紧凑数组 [代码, 名称, 级别, 形态, 涨跌幅]，由报告里的 JS 按需渲染，
+// 比预渲染 HTML 省 4/5 体积（500+ 题材全展开会有上万行）
+function memberData(map) {
+  const out = {};
+  for (const [name, list] of map) {
+    out[name] = (list || []).map((r) => [
+      r.code, r.name || '', r.timeframe_zh || '', r.pattern_zh || '',
+      Math.round((r.latest_change_pct ?? 0) * 100) / 100,
+    ]);
+  }
+  return out;
+}
+
+// 基于统计给出结论（规则生成，不做预测，只做结构解读）
+function reportAdvice(s) {
+  const out = [];
+  if (s.topInd) {
+    const pct = (s.topIndRatio * 100).toFixed(1);
+    if (s.topIndRatio >= 0.2) {
+      out.push(`<b>板块效应明显</b>：信号最集中在「${s.topInd.name}」，占 ${pct}%（${s.topInd.value} 条）。同行业多股同时出形态，通常是板块层面的资金推动，优先在这个方向里挑级别高、位置低的标的，比分散选股更有效率。`);
+    } else {
+      out.push(`<b>分布偏分散</b>：最大行业「${s.topInd.name}」只占 ${pct}%（${s.topInd.value} 条），更像个股行情而非板块行情，按个股结构选，不要按行业押注。`);
+    }
+  }
+  const resRatio = s.stocks ? s.resonance / s.stocks : 0;
+  if (s.resonance === 0) {
+    out.push(`<b>没有共振</b>：全部是单级别信号，级别之间没有相互确认，假信号概率偏高，建议等下一根 K 线确认方向后再动。`);
+  } else if (resRatio >= 0.25) {
+    out.push(`<b>共振比例较高</b>：${s.resonance} 只股票在多个级别同时出信号（占 ${(resRatio * 100).toFixed(0)}%），说明这些标的的趋势一致性较强，持续性通常优于单级别信号，可优先关注。`);
+  } else {
+    out.push(`<b>共振偏少</b>：只有 ${s.resonance} 只（${(resRatio * 100).toFixed(0)}%）多级别共振，其余是单级别信号，切换级别看时注意假信号。`);
+  }
+  const dir = s.upRatio >= 0.6 ? '整体偏多头，可留意形态突破后的续涨'
+    : (s.upRatio <= 0.4 ? '偏空信号居多，不宜追高，优先考虑规避'
+      : '多空相对均衡，方向要结合大盘和个股位置判断');
+  out.push(`<b>方向与涨幅</b>：看涨 ${s.up} 条 / 看跌 ${s.down} 条，平均最新涨跌幅 ${s.avgChg >= 0 ? '+' : ''}${s.avgChg.toFixed(2)}%。${dir}。`);
+  if (s.avgVol >= 2) {
+    out.push(`<b>量能配合较好</b>：平均较前量 ${s.avgVol.toFixed(2)} 倍，信号当天普遍明显放量，形态的有效性相对更高。`);
+  } else if (s.avgVol < 1.2) {
+    out.push(`<b>量能不足</b>：平均较前量只有 ${s.avgVol.toFixed(2)} 倍，多数信号没有得到放量确认，需要警惕诱多或诱空。`);
+  }
+  return out;
+}
+
+// 概念（题材）统计：一只股票常属多个概念，按「信号条数 × 概念标签」计数，
+// 所以各项占比合计会超过 100%，这是多标签数据的正常表现
+function conceptStats(conceptMap) {
+  const rows = state.results || [];
+  const cnt = new Map();
+  let covered = 0;
+  for (const r of rows) {
+    const list = (conceptMap && conceptMap[r.code]) || [];
+    if (list.length) covered += 1;
+    for (const c of list) cnt.set(c, (cnt.get(c) || 0) + 1);
+  }
+  const items = [...cnt.entries()].map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value);
+  return { items, covered, total: rows.length, tags: items.length };
+}
+
 // ===================== 生成筛选报告 =====================
-function generateReport() {
+async function generateReport() {
   if (!state.results.length) return;
+  const btn = document.getElementById('reportBtn');
+  const btnText = btn ? btn.textContent : '';
+  const setBusy = (txt) => { if (btn) { btn.disabled = true; btn.textContent = txt; } };
+  const clearBusy = () => { if (btn) { btn.disabled = false; btn.textContent = btnText; } };
+  setBusy('⏳ 准备中…');
+
+  // 概念数据：首次全量构建约 15 秒（531 个概念板块），之后读 7 天缓存秒回
+  const allCodes = [...new Set(state.results.map((r) => r.code).filter(Boolean))];
+  let conceptMap = {};
+  let conceptInfo = null;
+  try {
+    setBusy('⏳ 加载概念数据…');
+    const cr = await fetchTimeout(API.concepts(allCodes.join(',')), {}, 120000);
+    const cd = await cr.json();
+    conceptMap = cd.map || {};
+    conceptInfo = cd.info || null;
+  } catch (e) {
+    conceptMap = {};   // 概念拉取失败不影响报告主体
+  }
+  setBusy('⏳ 生成报告…');
+
   const st = state.scanStats || {};
+  const stat = reportStats();
   const results = [...state.results].sort((a, b) => (b.latest_change_pct ?? 0) - (a.latest_change_pct ?? 0));
-  const all = results;   // 展示全部筛选结果（不再截断前 30 条）
+  const all = results;
   const resonanceStocks = [...new Set(state.results.filter((r) => r.resonance).map((r) => r.code + ' ' + r.name))];
   const upCount = state.results.filter((r) => r.direction === 'bullish').length;
   const downCount = state.results.filter((r) => r.direction === 'bearish').length;
   const now = new Date().toLocaleString('zh-CN');
 
-  const rows = all.map((r) => `
-    <tr>
-      <td>${r.code}</td><td>${r.name}</td><td>${r.market_zh}</td><td>${r.timeframe_zh}</td>
-      <td>${r.pattern_zh}</td><td>${(r.latest_change_pct >= 0 ? '+' : '')}${(r.latest_change_pct ?? 0).toFixed(2)}%</td><td>${(r.tf_change_pct >= 0 ? '+' : '')}${(r.tf_change_pct ?? 0).toFixed(2)}%</td><td>${(r.volume_ratio_prev ?? r.volume_ratio)}×</td>
-      <td>${r.resonance ? '✓' : ''}</td>
-    </tr>`).join('');
+  const cStat = conceptStats(conceptMap);
+  // 行业 / 题材 → 成员信号，供柱状图点击展开
+  const indMembers = groupMembers(all, (r) => [r.industry || '未分类']);
+  const conMembers = groupMembers(all, (r) => conceptMap[r.code] || []);
+  const memberJson = JSON.stringify({
+    ind: memberData(indMembers),
+    con: memberData(conMembers),
+  }).replace(/</g, '\\u003c');
+  const industryBars = svgBars(stat.industries, 0, 120, true, () => '', 'ind');
+  const conceptBars = svgBars(cStat.items, 0, 120, true, () => '', 'con');
+  const barsHtml = svgBars(stat.patterns, 10, 96, false);
+  const advice = reportAdvice(stat);
+  const tfLine = Object.entries(stat.tfMap).filter(([, v]) => v > 0)
+    .map(([k, v]) => `${k} ${v} 条`).join(' · ');
+
+  // 表格单元格带 data-v（排序用的原始值），表头点击即可重排
+  const rows = all.map((r) => {
+    const chg = r.latest_change_pct ?? 0;
+    const tfChg = r.tf_change_pct ?? 0;
+    const vol = r.volume_ratio_prev ?? r.volume_ratio ?? 0;
+    return `<tr>
+      <td data-v="${r.code}">${r.code}</td>
+      <td data-v="${r.name || ''}">${r.name}</td>
+      <td data-v="${r.market_zh || ''}">${r.market_zh}</td>
+      <td data-v="${r.timeframe || ''}">${r.timeframe_zh}</td>
+      <td data-v="${r.pattern_zh || ''}">${r.pattern_zh}</td>
+      <td data-v="${r.industry || ''}">${r.industry || '—'}</td>
+      <td data-v="${chg}" class="${chg >= 0 ? 'up' : 'down'}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%</td>
+      <td data-v="${tfChg}" class="${tfChg >= 0 ? 'up' : 'down'}">${tfChg >= 0 ? '+' : ''}${tfChg.toFixed(2)}%</td>
+      <td data-v="${vol}">${vol}×</td>
+      <td data-v="${r.resonance ? 1 : 0}">${r.resonance ? '✓' : ''}</td>
+    </tr>`;
+  }).join('');
 
   const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
   <title>A股蜡烛图形态筛选报告</title>
   <style>
-    body{font-family:'PingFang SC','Microsoft YaHei',sans-serif;max-width:1000px;margin:0 auto;padding:24px;color:#1a1a1a;background:#fff}
-    h1{font-size:22px;border-bottom:3px solid #f23645;padding-bottom:10px}
-    .meta{color:#666;font-size:13px;margin-bottom:16px}
-    .summary{display:flex;gap:16px;flex-wrap:wrap;margin:16px 0}
-    .card{flex:1;min-width:130px;background:#f7f8fa;border:1px solid #e5e7eb;border-radius:8px;padding:14px;text-align:center}
-    .card .num{font-size:24px;font-weight:700;color:#f23645}
-    .card .lbl{font-size:12px;color:#666;margin-top:4px}
-    table{width:100%;border-collapse:collapse;font-size:13px;margin-top:16px}
-    th{background:#f7f8fa;text-align:left;padding:8px 10px;border-bottom:2px solid #e5e7eb}
-    td{padding:7px 10px;border-bottom:1px solid #f0f1f3}
-    h2{font-size:16px;margin-top:24px}
-    .disclaimer{margin-top:24px;padding:12px;background:#fff8f0;border:1px solid #fde8c8;border-radius:6px;color:#8a6d3b;font-size:12px}
-    .tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;background:#f0f1f3;margin:2px}
+    body{font-family:'PingFang SC','Microsoft YaHei',sans-serif;max-width:1020px;margin:0 auto;padding:26px;color:#1a1a1a;background:#fff;line-height:1.6}
+    h1{font-size:22px;border-bottom:3px solid #f23645;padding-bottom:10px;margin-bottom:6px}
+    h2{font-size:16px;margin:26px 0 12px;padding-left:9px;border-left:3px solid #f23645}
+    .meta{color:#8a8f99;font-size:13px;margin-bottom:14px}
+    .summary{display:flex;gap:12px;flex-wrap:wrap;margin:18px 0}
+    .card{flex:1;min-width:112px;background:#f7f8fa;border:1px solid #e8eaed;border-radius:8px;padding:13px;text-align:center}
+    .card .num{font-size:23px;font-weight:700;color:#f23645;line-height:1.2}
+    .card .lbl{font-size:12px;color:#7a8794;margin-top:4px}
+    .chart-box{border:1px solid #eceef1;border-radius:8px;padding:14px;margin:10px 0}
+    .advice{margin:0;padding-left:20px}
+    .advice li{margin:9px 0;font-size:13.5px;color:#33383f}
+    .advice b{color:#1a1a1a}
+    table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:12px}
+    th{background:#f7f8fa;text-align:left;padding:8px 9px;border-bottom:2px solid #e8eaed;position:sticky;top:0}
+    td{padding:6px 9px;border-bottom:1px solid #f2f3f5}
+    tr:hover td{background:#fafbfc}
+    .up{color:#f23645} .down{color:#26a69a}
+    .disclaimer{margin-top:26px;padding:12px;background:#fff8f0;border:1px solid #fde8c8;border-radius:6px;color:#8a6d3b;font-size:12px}
+    .tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;background:#f0f1f3;margin:3px 4px 3px 0}
+    .grid2{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
+    .grid2>div{flex:1;min-width:300px}
+    .chart-note{font-size:12px;color:#8a8f99;margin-top:8px}
+    /* 可折叠区块（全部信号表） */
+    .sec>summary{list-style:none;cursor:pointer}
+    .sec>summary::-webkit-details-marker{display:none}
+    .sec>summary:hover h2{color:#f23645}
+    .sec-caret{display:inline-block;margin-left:6px;font-size:11px;color:#b0b6bd;transition:transform .15s}
+    .sec:not([open]) .sec-caret{transform:rotate(-90deg)}
+    .sec table{margin-top:4px}
+    /* 表头可排序 */
+    #sigTable th{user-select:none;white-space:nowrap}
+    #sigTable th:hover{background:#f0f1f4;color:#f23645}
+    #sigTable th[data-dir="asc"]::after{content:' ↑';color:#f23645}
+    #sigTable th[data-dir="desc"]::after{content:' ↓';color:#f23645}
+    /* 可点击展开的柱状图行 */
+    .bar-item summary::-webkit-details-marker{display:none}
+    .bar-item summary:hover span{filter:brightness(.97)}
+    .bar-caret{width:12px;flex:0 0 auto;color:#b0b6bd;font-size:10px;transition:transform .15s}
+    .bar-item[open] .bar-caret{transform:rotate(90deg)}
+    .m-box{max-height:260px;overflow:auto;margin:2px 0 10px 0;padding:6px 10px;background:#fafbfc;border:1px solid #eceef1;border-radius:6px}
+    .m-row{display:flex;align-items:center;gap:10px;font-size:12px;padding:4px 0;border-bottom:1px dashed #f0f1f3}
+    .m-row:last-child{border-bottom:0}
+    .m-code{width:56px;flex:0 0 auto;color:#7a8794}
+    .m-name{width:96px;flex:0 0 auto;color:#1a1a1a}
+    .m-tf{flex:1;color:#8a8f99}
+    .m-empty{font-size:12px;color:#a0a6ad;padding:6px 10px}
+    /* 行业/题材列表：搜索框 + 滚动区（全部列出，不再只给 Top N） */
+    .q-input{width:100%;box-sizing:border-box;padding:7px 10px;margin-bottom:9px;font-size:12.5px;
+      border:1px solid #dfe2e7;border-radius:6px;outline:none;font-family:inherit;color:#1a1a1a;background:#fff}
+    .q-input:focus{border-color:#f23645;box-shadow:0 0 0 2px rgba(242,54,69,.1)}
+    .q-input::placeholder{color:#a8aeb6}
+    .bars-scroll{max-height:430px;overflow:auto;padding-right:4px}
+    .bar-row,.bar-item>summary{display:flex;align-items:center;gap:8px;font-size:12px;margin:5px 0}
+    .bar-item>summary{cursor:pointer;list-style:none;border-radius:4px;padding:1px 2px}
+    .bar-item>summary:hover{background:#fafbfc}
+    .b-label{flex:0 0 auto;text-align:right;color:#33383f;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+    .b-track{flex:1;background:#f2f3f5;border-radius:3px;height:17px;position:relative}
+    .b-fill{display:block;height:100%;border-radius:3px}
+    .b-val{width:62px;flex:0 0 auto;color:#7a8794}
+    .b-pct{color:#a0a6ad;font-size:11px}
   </style></head><body>
   <h1>🕯 A股蜡烛图形态筛选报告</h1>
-  <div class="meta">生成时间：${now}</div>
+  <div class="meta">生成时间：${now}　|　级别分布：${tfLine || '—'}　|　过滤条件：${state.results.length} 条信号</div>
+
   <div class="summary">
     <div class="card"><div class="num">${st.total_samples ?? '—'}</div><div class="lbl">总样本数</div></div>
-    <div class="card"><div class="num">${st.matched_stocks ?? state.results.length}</div><div class="lbl">命中股票</div></div>
-    <div class="card"><div class="num">${state.results.length}</div><div class="lbl">信号总数</div></div>
-    <div class="card"><div class="num">${resonanceStocks.length}</div><div class="lbl">共振股票</div></div>
+    <div class="card"><div class="num">${stat.stocks}</div><div class="lbl">命中股票</div></div>
+    <div class="card"><div class="num">${stat.total}</div><div class="lbl">信号条数</div></div>
+    <div class="card"><div class="num">${stat.resonance}</div><div class="lbl">共振股票</div></div>
     <div class="card"><div class="num" style="color:#f23645">${upCount}</div><div class="lbl">看涨信号</div></div>
     <div class="card"><div class="num" style="color:#26a69a">${downCount}</div><div class="lbl">看跌信号</div></div>
   </div>
-  <h2>全部信号（${all.length} 条，按最新涨跌幅排序）</h2>
-  <table><thead><tr>
-    <th>代码</th><th>名称</th><th>板块</th><th>级别</th><th>形态</th><th>涨跌幅</th><th>级别涨跌幅</th><th>较前量</th><th>共振</th>
-  </tr></thead><tbody>${rows}</tbody></table>
+
+  <h2>概念题材分布（共 ${cStat.tags} 个题材，点击行展开个股）</h2>
+  <div class="chart-box">
+    <input class="q-input" id="qConcept" placeholder="搜索题材：如 太空算力 / AI短剧 / 机器人">
+    <div class="bars-scroll" id="barsConcept">${conceptBars || '<div style="color:#8a8f99">暂无概念数据</div>'}</div>
+    <div class="chart-note">一只股票常同时属于多个概念，各项计数会重复统计，合计超过 100% 属正常。
+    覆盖情况：${cStat.covered} / ${cStat.total} 条信号匹配到概念。
+    数据源：东财概念板块 + 通达信概念板块 + 自定义题材（data/themes.json）。</div>
+  </div>
+
+  <h2>行业分布（共 ${stat.industries.length} 个行业，点击行展开个股）</h2>
+  <div class="chart-box">
+    <input class="q-input" id="qIndustry" placeholder="搜索行业">
+    <div class="bars-scroll" id="barsIndustry">${industryBars || '<div style="color:#8a8f99">无行业数据（可能是本次结果未包含行业字段，重新筛选一次即可）</div>'}</div>
+  </div>
+
+  <h2>形态分布 · Top 10</h2>
+  <div class="chart-box">${barsHtml || '—'}</div>
+
+  <h2>结论与操作建议</h2>
+  <ul class="advice">${advice.map((a) => `<li>${a}</li>`).join('')}</ul>
+
+  <details class="sec" open>
+    <summary><h2>全部信号（${all.length} 条 · 默认按涨跌幅降序 · 点击表头可重排，点击此行可折叠）<span class="sec-caret">▾</span></h2></summary>
+    <table id="sigTable"><thead><tr>
+      <th data-key="code" data-type="text">代码</th>
+      <th data-key="name" data-type="text">名称</th>
+      <th data-key="market" data-type="text">板块</th>
+      <th data-key="tf" data-type="text">级别</th>
+      <th data-key="pattern" data-type="text">形态</th>
+      <th data-key="industry" data-type="text">行业</th>
+      <th data-key="chg" data-type="num">涨跌幅</th>
+      <th data-key="tf_chg" data-type="num">级别涨跌幅</th>
+      <th data-key="vol" data-type="num">较前量</th>
+      <th data-key="resonance" data-type="num">共振</th>
+    </tr></thead><tbody id="sigBody">${rows}</tbody></table>
+  </details>
   ${resonanceStocks.length ? `<h2>跨级别共振股票（${resonanceStocks.length} 只）</h2><div>${resonanceStocks.map((s) => `<span class="tag">${s}</span>`).join('')}</div>` : ''}
-  <div class="disclaimer">本报告由 A股量化分析工具自动生成，仅用于技术形态学习与研究，不构成任何投资建议。股市有风险，投资需谨慎。</div>
+  <div class="disclaimer">本报告由 A股量化分析工具自动生成，仅用于技术形态学习与研究，不构成任何投资建议。形态信号只是概率线索，实际交易请结合大盘环境、个股基本面与仓位管理。股市有风险，投资需谨慎。</div>
+  <script>
+  var MEM = ${memberJson};
+  (function () {
+    // 行业/题材行的个股明细：点开才渲染（500+ 题材全预渲染会有上万行、2MB 体积）
+    function renderMem(kind, name) {
+      var arr = ((MEM[kind] || {})[name]) || [];
+      if (!arr.length) return '<div class="m-empty">暂无明细</div>';
+      var h = '';
+      for (var i = 0; i < arr.length; i++) {
+        var x = arr[i], chg = x[4] || 0;
+        h += '<div class="m-row"><span class="m-code">' + x[0] + '</span>'
+          + '<span class="m-name">' + (x[1] || '') + '</span>'
+          + '<span class="m-tf">' + (x[2] || '') + ' · ' + (x[3] || '') + '</span>'
+          + '<span class="' + (chg >= 0 ? 'up' : 'down') + '">'
+          + (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%</span></div>';
+      }
+      return '<div class="m-box">' + h + '</div>';
+    }
+    function fillItem(el) {
+      if (!el.open) return;
+      var slot = el.querySelector('.m-slot');
+      if (!slot || slot.getAttribute('data-done')) return;
+      slot.innerHTML = renderMem(el.getAttribute('data-kind'), el.getAttribute('data-name'));
+      slot.setAttribute('data-done', '1');
+    }
+    document.addEventListener('toggle', function (e) {
+      var d = e.target;
+      if (d && d.classList && d.classList.contains('bar-item')) fillItem(d);
+    }, true);
+    document.addEventListener('click', function (e) {
+      var el = e.target;
+      while (el && el.nodeType === 1 && el !== document.body) {
+        if (el.classList && el.classList.contains('bar-item')) {
+          setTimeout(function () { fillItem(el); }, 0);
+          return;
+        }
+        el = el.parentNode;
+      }
+    });
+
+    var table = document.getElementById('sigTable');
+    var tb = document.getElementById('sigBody');
+    if (!table || !tb) return;
+    var ths = Array.prototype.slice.call(table.querySelectorAll('th'));
+    ths.forEach(function (th, idx) {
+      th.style.cursor = 'pointer';
+      th.title = '点击按此列排序，再点切换升降序';
+      th.addEventListener('click', function () {
+        var type = th.getAttribute('data-type') || 'text';
+        var dir = th.getAttribute('data-dir') === 'desc' ? 'asc' : 'desc';
+        ths.forEach(function (t) { t.removeAttribute('data-dir'); });
+        th.setAttribute('data-dir', dir);
+        var sign = dir === 'desc' ? -1 : 1;
+        var rows = Array.prototype.slice.call(tb.rows);
+        rows.sort(function (a, b) {
+          var va = a.cells[idx].getAttribute('data-v') || '';
+          var vb = b.cells[idx].getAttribute('data-v') || '';
+          if (type === 'num') {
+            var na = parseFloat(va), nb = parseFloat(vb);
+            if (isNaN(na)) na = -Infinity;
+            if (isNaN(nb)) nb = -Infinity;
+            return (na - nb) * sign;
+          }
+          return String(va).localeCompare(String(vb), 'zh') * sign;
+        });
+        rows.forEach(function (r) { tb.appendChild(r); });
+      });
+    });
+
+    // 行业 / 题材搜索：本地过滤列表行（报告离线可用，全部数据已在页面里）
+    function bindBarsSearch(inputId, boxId) {
+      var inp = document.getElementById(inputId);
+      var box = document.getElementById(boxId);
+      if (!inp || !box) return;
+      inp.addEventListener('input', function () {
+        var kw = this.value.trim().toLowerCase();
+        var items = box.querySelectorAll('.bar-item');
+        Array.prototype.forEach.call(items, function (el) {
+          var first = el.querySelector('summary span');
+          var txt = ((first && first.textContent) || '').toLowerCase();
+          var hit = !kw || txt.indexOf(kw) >= 0;
+          el.style.display = hit ? '' : 'none';
+          if (!hit) el.removeAttribute('open');
+        });
+      });
+    }
+    bindBarsSearch('qConcept', 'barsConcept');
+    bindBarsSearch('qIndustry', 'barsIndustry');
+  })();
+  <\/script>
   </body></html>`;
 
+  clearBusy();
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   window.open(url, '_blank');
@@ -2976,10 +3430,19 @@ const KLINE_TF_ZH = { minute: '分时', daily: '日线', weekly: '周线', month
 function klineStockList() {
   const seen = new Set();
   const out = [];
-  for (const r of (state.results || [])) {
+  // 用一级界面当前排序后的列表（分组模式为组的顺序），保证侧栏与主表一致
+  const src = (state.sortedResults && state.sortedResults.length)
+    ? state.sortedResults
+    : (state.results || []);
+  for (const r of src) {
     if (!r || !r.code || seen.has(r.code)) continue;
     seen.add(r.code);
-    out.push({ code: r.code, name: r.name || '', change_pct: r.change_pct });
+    out.push({
+      code: r.code,
+      name: r.name || '',
+      change_pct: (r.latest_change_pct !== undefined && r.latest_change_pct !== null)
+        ? r.latest_change_pct : r.change_pct,
+    });
   }
   return out;
 }
