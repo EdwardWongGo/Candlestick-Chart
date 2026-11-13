@@ -306,9 +306,9 @@ function renderPatterns() {
   ];
   groups.forEach((g) => {
     const patterns = state.meta.patterns.filter((p) => p.direction === g.key);
-    // 看涨形态：把「看涨吞没」「启明星」置顶，方便日常选择（其余保持原顺序）
+    // 看涨形态：把「阳包阴」「看涨吞没」「启明星」置顶，方便日常选择（其余保持原顺序）
     if (g.key === 'bullish') {
-      const pin = ['bullish_engulfing', 'morning_star'];
+      const pin = ['bullish_engulfing', 'bullish_engulfing_reversal', 'morning_star'];
       patterns.sort((a, b) => {
         const ia = pin.indexOf(a.key), ib = pin.indexOf(b.key);
         if (ia === -1 && ib === -1) return 0;

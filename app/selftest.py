@@ -2,7 +2,7 @@
 """
 形态引擎自检 —— 供 Web「测试入口」调用，返回结构化测试结果
 
-使用合成 K 线（不依赖网络）验证 17 个形态识别逻辑的正确性。
+使用合成 K 线（不依赖网络）验证各形态识别逻辑的正确性。
 
 Author: HZQ
 """
@@ -61,12 +61,14 @@ def run_selftest() -> dict:
     cs = _downtrend(12)
     cs.append(_mk(80, 80.5, 77.0, 77.5))
     cs.append(_mk(77.2, 82.5, 76.8, 82.0))
-    cases.append(_case("看涨吞没", cs, ["bullish_engulfing"]))
+    cases.append(_case("阳包阴", cs, ["bullish_engulfing"]))
+    cases.append(_case("看涨吞没（下跌趋势 + 前一根有体量）", cs, ["bullish_engulfing_reversal"]))
 
     cs = _uptrend(12)
     cs.append(_mk(118, 121, 117, 120))
     cs.append(_mk(120.5, 121, 114, 115))
-    cases.append(_case("看跌吞没", cs, ["bearish_engulfing"]))
+    cases.append(_case("阴包阳", cs, ["bearish_engulfing"]))
+    cases.append(_case("看跌吞没（上涨趋势 + 前一根有体量）", cs, ["bearish_engulfing_reversal"]))
 
     cs = _uptrend(8, base=100, step=3)
     cs.append(_mk(124, 124.5, 119, 119.5))

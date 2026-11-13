@@ -46,6 +46,12 @@ def _score(base_score: float, candles: List[Candle], i: int,
 # 用于挡掉「冲高回落」的长上影（下影）K 线 —— 那种形状方向是反的。
 _MIN_CLOSE_POS = 0.6
 
+# 反转形态的「位置」容忍度：形态前收盘相对近 20 根最低（看涨）/最高（看跌）收盘的偏离上限。
+# prior_trend 用固定 20 根线性回归，对 V 型走势会误判 —— 例如 000665 湖北广电 2026-11-13：
+# 窗口 10-15~11-11 首 4.33 → 末 4.27（仅 −1.4%）被判 down，但期间 10-30 已探底 3.65、
+# 到 11-12 反弹 +14%，形态出现在反弹第 10 天，属于上涨中继而非底部反转。
+_REVERSAL_POS_TOL = 0.08
+
 
 def _trend_bonus(trend: Optional[str]) -> float:
     """趋势越明确，反转信号越有意义的加成。"""
@@ -179,6 +185,63 @@ def _bearish_engulfing(candles: List[Candle], i: int) -> Optional[float]:
             trend = base.prior_trend(candles, i - 1)
             return _score(quality, candles, i, _trend_bonus(trend if trend == "up" else None))
     return None
+
+
+def _bullish_engulfing_reversal(candles: List[Candle], i: int) -> Optional[float]:
+    """看涨吞没（真正的底部反转）：下跌趋势中，阳线实体完全吞没前一根有体量的阴线。
+
+    与「阳包阴」（_bullish_engulfing）的区别只在两处前提：
+    1. 必须处于下跌趋势（前 20 根线性回归斜率为负）
+    2. 前一根必须是有体量的阴线（实体 ≥ 近 10 根均体 50%），避免吞掉一根几乎平盘的小阴线
+
+    打分按「今实体 / 近 10 根均体」计算 —— 用「今实体 / 昨实体」时，昨实体趋零会让分数爆掉
+    （大参林 603233 昨实体仅为均体 2%，实体比 18 倍直接封顶 100）。
+    """
+    if i < 1:
+        return None
+    prev, cur = candles[i - 1], candles[i]
+    if not (prev.is_bearish and cur.is_bullish):
+        return None
+    if not (cur.open <= prev.close and cur.close >= prev.open and cur.body > prev.body):
+        return None
+    avg = base.avg_body(candles, i - 1, 10)
+    if avg > 0 and prev.body < avg * 0.5:
+        return None
+    if base.prior_trend(candles, i - 1) != "down":
+        return None
+    # 必须还在近期低位附近：反弹超过 8% 说明反转已经走完，属于上涨中继
+    lo = min(c.close for c in candles[max(0, i - 20):i])
+    if lo > 0 and prev.close > lo * (1 + _REVERSAL_POS_TOL):
+        return None
+    ratio = cur.body / avg if avg > 0 else 1.0
+    quality = min(100.0, 68 + max(0.0, ratio - 1.0) * 10)
+    return _score(quality, candles, i, _trend_bonus("down"))
+
+
+def _bearish_engulfing_reversal(candles: List[Candle], i: int) -> Optional[float]:
+    """看跌吞没（真正的顶部反转）：上涨趋势中，阴线实体完全吞没前一根有体量的阳线。
+
+    与「阴包阳」的区别同看涨侧：要求上涨趋势 + 前一根实体 ≥ 均体 50%，打分按均体。
+    """
+    if i < 1:
+        return None
+    prev, cur = candles[i - 1], candles[i]
+    if not (prev.is_bullish and cur.is_bearish):
+        return None
+    if not (cur.open >= prev.close and cur.close <= prev.open and cur.body > prev.body):
+        return None
+    avg = base.avg_body(candles, i - 1, 10)
+    if avg > 0 and prev.body < avg * 0.5:
+        return None
+    if base.prior_trend(candles, i - 1) != "up":
+        return None
+    # 必须还在近期高位附近：回落超过 8% 说明顶部反转已经走完
+    hi = max(c.close for c in candles[max(0, i - 20):i])
+    if hi > 0 and prev.close < hi * (1 - _REVERSAL_POS_TOL):
+        return None
+    ratio = cur.body / avg if avg > 0 else 1.0
+    quality = min(100.0, 68 + max(0.0, ratio - 1.0) * 10)
+    return _score(quality, candles, i, _trend_bonus("up"))
 
 
 def _piercing(candles: List[Candle], i: int) -> Optional[float]:
@@ -530,11 +593,23 @@ PATTERNS: List[PatternDef] = [
                "倒 T 字线：开盘收盘均位于最低价附近，上影线很长、几乎无下影线。上涨趋势中冲高回落、卖压沉重，看跌。",
                [{"o": 10, "h": 10.8, "l": 9.95, "c": 10.0}]),
     # ---- 双根 ----
-    PatternDef("bullish_engulfing", "看涨吞没", "Bullish Engulfing", "bullish", 2, _bullish_engulfing,
-               "下跌趋势中，一根阳线实体完全吞没前一根阴线实体。多方力量压倒空方，是强烈的底部反转信号。",
+    PatternDef("bullish_engulfing", "阳包阴", "Yang Engulfs Yin", "bullish", 2, _bullish_engulfing,
+               "前一根阴线、后一根阳线，阳线实体完全吞没阴线实体。只判形状、不限位置——上涨途中的回踩反包、"
+               "低位横盘的小阳包小阴都会命中；需要底部反转语义请用「看涨吞没」。",
                [{"o": 10.5, "h": 10.6, "l": 9.8, "c": 9.9}, {"o": 9.7, "h": 10.8, "l": 9.5, "c": 10.7}]),
-    PatternDef("bearish_engulfing", "看跌吞没", "Bearish Engulfing", "bearish", 2, _bearish_engulfing,
-               "上涨趋势中，一根阴线实体完全吞没前一根阳线实体。空方力量压倒多方，是强烈的顶部反转信号。",
+    PatternDef("bullish_engulfing_reversal", "看涨吞没", "Bullish Engulfing", "bullish", 2,
+               _bullish_engulfing_reversal,
+               "下跌趋势中，阳线实体完全吞没前一根有体量的阴线（实体 ≥ 近 10 根均体 50%）。"
+               "教科书定义的底部反转信号，比「阳包阴」多了位置与体量前提。",
+               [{"o": 10.5, "h": 10.6, "l": 9.8, "c": 9.9}, {"o": 9.7, "h": 10.8, "l": 9.5, "c": 10.7}]),
+    PatternDef("bearish_engulfing", "阴包阳", "Yin Engulfs Yang", "bearish", 2, _bearish_engulfing,
+               "前一根阳线、后一根阴线，阴线实体完全吞没阳线实体。只判形状、不限位置；"
+               "需要顶部反转语义请用「看跌吞没」。",
+               [{"o": 9.8, "h": 10.4, "l": 9.6, "c": 10.3}, {"o": 10.5, "h": 10.7, "l": 9.7, "c": 9.8}]),
+    PatternDef("bearish_engulfing_reversal", "看跌吞没", "Bearish Engulfing", "bearish", 2,
+               _bearish_engulfing_reversal,
+               "上涨趋势中，阴线实体完全吞没前一根有体量的阳线（实体 ≥ 近 10 根均体 50%）。"
+               "教科书定义的顶部反转信号，比「阴包阳」多了位置与体量前提。",
                [{"o": 9.8, "h": 10.4, "l": 9.6, "c": 10.3}, {"o": 10.5, "h": 10.7, "l": 9.7, "c": 9.8}]),
     PatternDef("piercing", "刺透形态", "Piercing Line", "bullish", 2, _piercing,
                "下跌趋势中低开高走，阳线收盘深入前一根阴线实体一半以上（但未完全吞没）。看涨反转信号。",
