@@ -42,6 +42,11 @@ def _score(base_score: float, candles: List[Candle], i: int,
     return min(100.0, max(0.0, score))
 
 
+# 星体形态第三根的「收盘位置」下限：0=收在最低、1=收在最高。
+# 用于挡掉「冲高回落」的长上影（下影）K 线 —— 那种形状方向是反的。
+_MIN_CLOSE_POS = 0.6
+
+
 def _trend_bonus(trend: Optional[str]) -> float:
     """趋势越明确，反转信号越有意义的加成。"""
     return 4.0 if trend else 0.0
@@ -251,7 +256,14 @@ def _bearish_harami(candles: List[Candle], i: int) -> Optional[float]:
 # 三根形态
 # ---------------------------------------------------------------------------
 def _morning_star(candles: List[Candle], i: int) -> Optional[float]:
-    """启明星（看涨反转）：下跌后 大阴线 + 星线 + 大阳线，第三根收回第一根实体一半以上。"""
+    """启明星（看涨反转）：下跌后 大阴线 + 星线 + 大阳线，第三根收回第一根实体一半以上。
+
+    第三根必须是真正的「大阳线」且收在当周/当日振幅上部。
+    旧实现只判「收阳 + 收盘过第一根实体中点」，于是「冲高回落的长上影小阳线」
+    也会被判成启明星 —— 例如 2026-11-13 英诺激光(301021) 周线：
+    当周冲到 +23.7% 又收回 +4.1%，实体只有第一根的 8.7%，上影是实体的 12.7 倍，
+    收盘位于当周振幅的 17%（几乎收在最低）。这形状方向恰恰是看跌。
+    """
     if i < 2:
         return None
     first, second, third = candles[i - 2], candles[i - 1], candles[i]
@@ -268,16 +280,26 @@ def _morning_star(candles: List[Candle], i: int) -> Optional[float]:
     # 第二根为小实体星线（可阴可阳）
     if second.body > 0.5 * first.body:
         return None
-    # 第三根大阳线收回第一根实体一半以上
+    # 第三根必须是大阳线：达到近 10 根均体的 0.7 倍，或第一根实体的 35%
+    if third.body < min(avg * 0.7, first.body * 0.35):
+        return None
+    # 收盘须在振幅上部（挡掉长上影的冲高回落）
+    rng = third.total_range
+    if rng > 0 and (third.close - third.low) / rng < _MIN_CLOSE_POS:
+        return None
+    # 收盘要真正深入第一根实体上半部（留 5% 缓冲，避免刚过中点）
     mid = (first.open + first.close) / 2
-    if third.close > mid:
-        quality = min(100.0, 78 + (third.close - mid) / first.body * 30)
-        return _score(quality, candles, i, _trend_bonus("down"))
-    return None
+    if third.close < mid + first.body * 0.05:
+        return None
+    quality = min(100.0, 78 + (third.close - mid) / first.body * 30)
+    return _score(quality, candles, i, _trend_bonus("down"))
 
 
 def _evening_star(candles: List[Candle], i: int) -> Optional[float]:
-    """黄昏星（看跌反转）：上涨后 大阳线 + 星线 + 大阴线，第三根跌破第一根实体一半。"""
+    """黄昏星（看跌反转）：上涨后 大阳线 + 星线 + 大阴线，第三根跌破第一根实体一半。
+
+    与启明星对称：第三根必须是大阴线且收在振幅下部（挡掉长下影的「探底回升」）。
+    """
     if i < 2:
         return None
     first, second, third = candles[i - 2], candles[i - 1], candles[i]
@@ -292,11 +314,18 @@ def _evening_star(candles: List[Candle], i: int) -> Optional[float]:
         return None
     if second.body > 0.5 * first.body:
         return None
+    # 第三根必须是大阴线
+    if third.body < min(avg * 0.7, first.body * 0.35):
+        return None
+    # 收盘须在振幅下部
+    rng = third.total_range
+    if rng > 0 and (third.high - third.close) / rng < _MIN_CLOSE_POS:
+        return None
     mid = (first.open + first.close) / 2
-    if third.close < mid:
-        quality = min(100.0, 78 + (mid - third.close) / first.body * 30)
-        return _score(quality, candles, i, _trend_bonus("up"))
-    return None
+    if third.close > mid - first.body * 0.05:
+        return None
+    quality = min(100.0, 78 + (mid - third.close) / first.body * 30)
+    return _score(quality, candles, i, _trend_bonus("up"))
 
 
 def _three_white_soldiers(candles: List[Candle], i: int) -> Optional[float]:
